@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -23,6 +24,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -83,18 +88,20 @@ class MainActivity : ComponentActivity() {
     val state = vm.state
     Surface(Modifier.fillMaxSize(), color = Bg) {
         when (state.screen) {
-            AppScreen.SETUP -> SetupScreen(state, vm::saveProvider)
+            AppScreen.SETUP -> SetupScreen(vm::saveProvider)
             AppScreen.PLAYER -> PlayerScreen(state, vm)
             else -> Column {
                 AppTopBar(state, vm)
                 when (state.screen) {
                     AppScreen.GUIDE -> GuideScreen(state, vm)
                     AppScreen.SEARCH -> SearchScreen(state, vm)
+                    AppScreen.MULTIVIEW -> MultiviewScreen(state, vm)
                     AppScreen.SETTINGS -> SettingsScreen(state, vm)
                     else -> Unit
                 }
             }
         }
+        state.pendingPinChannelId?.let { ParentalPinDialog(vm::submitParentalPin, vm::cancelParentalPin) }
         state.error?.let { ErrorBanner(it, vm::clearError) }
     }
 }
@@ -109,6 +116,7 @@ class MainActivity : ComponentActivity() {
         Spacer(Modifier.width(38.dp))
         NavButton("Live TV", Icons.Default.LiveTv, state.screen == AppScreen.GUIDE) { vm.navigate(AppScreen.GUIDE) }
         NavButton("Search", Icons.Default.Search, state.screen == AppScreen.SEARCH) { vm.navigate(AppScreen.SEARCH) }
+        NavButton("Multiview", Icons.Default.GridView, state.screen == AppScreen.MULTIVIEW) { vm.navigate(AppScreen.MULTIVIEW) }
         NavButton("Settings", Icons.Default.Settings, state.screen == AppScreen.SETTINGS) { vm.navigate(AppScreen.SETTINGS) }
         Spacer(Modifier.weight(1f))
         if (state.loading) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(12.dp)); Text("Updating", color = TextMuted, fontSize = 14.sp) }
@@ -143,7 +151,7 @@ class MainActivity : ComponentActivity() {
                 }
                 if (state.visibleChannels.isEmpty()) item { EmptyGuide(state.provider != null, vm::refresh) }
             }
-            state.selectedChannelId?.let { id -> state.channels.firstOrNull { it.id == id }?.let { SelectedChannelBar(it, currentAndNext(it, state.programs).firstOrNull(), vm) } }
+            state.selectedChannelId?.let { id -> state.channels.firstOrNull { it.id == id }?.let { SelectedChannelBar(it, currentAndNext(it, state.programs).firstOrNull(), lastCatchup(it, state.programs), vm) } }
         }
     }
 }
@@ -166,7 +174,7 @@ class MainActivity : ComponentActivity() {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column { Text(state.selectedGroup, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${state.visibleChannels.size} channels", color = TextMuted, fontSize = 13.sp) }
         Spacer(Modifier.weight(1f))
-        TvButton({ vm.setSort(when(state.sort){ChannelSort.MANUAL->ChannelSort.ALPHABETICAL;ChannelSort.ALPHABETICAL->ChannelSort.PROVIDER;ChannelSort.PROVIDER->ChannelSort.MANUAL}) }) { Icon(Icons.Default.Sort,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(state.sort.name.lowercase().replaceFirstChar(Char::uppercase)) }
+        TvButton({ vm.setSort(when(state.sort){ChannelSort.MANUAL->ChannelSort.ALPHABETICAL;ChannelSort.ALPHABETICAL->ChannelSort.PROVIDER;ChannelSort.PROVIDER->ChannelSort.MANUAL}) }) { Icon(Icons.AutoMirrored.Filled.Sort,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(state.sort.name.lowercase().replaceFirstChar(Char::uppercase)) }
         Spacer(Modifier.width(8.dp)); TvButton(vm::refresh) { Icon(Icons.Default.Refresh,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Update") }
     }
 }
@@ -193,7 +201,7 @@ class MainActivity : ComponentActivity() {
         Text((channel.providerOrder + 1).toString(), Modifier.width(34.dp), color=TextMuted, fontSize=13.sp)
         if(channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(38.dp).padding(3.dp)) else Box(Modifier.size(34.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment=Alignment.Center){Text(channel.name.take(1),fontWeight=FontWeight.Bold)}
         Spacer(Modifier.width(10.dp)); Text(channel.name, Modifier.width(155.dp), fontWeight=FontWeight.Medium, maxLines=1, overflow=TextOverflow.Ellipsis)
-        if(channel.favorite) Icon(Icons.Default.Star,null,tint=Warning,modifier=Modifier.size(15.dp)); Spacer(Modifier.width(8.dp))
+        if(channel.favorite) Icon(Icons.Default.Star,null,tint=Warning,modifier=Modifier.size(15.dp)); if(channel.locked) Icon(Icons.Default.Lock,null,tint=TextMuted,modifier=Modifier.size(15.dp)); Spacer(Modifier.width(8.dp))
         val now = System.currentTimeMillis()
         repeat(2) { index ->
             val p = programs.getOrNull(index)
@@ -212,12 +220,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun SelectedChannelBar(channel: Channel, program: Program?, vm: MainViewModel) {
+@Composable private fun SelectedChannelBar(channel: Channel, program: Program?, previous: Program?, vm: MainViewModel) {
     Row(Modifier.fillMaxWidth().height(72.dp).padding(top=8.dp).clip(RoundedCornerShape(9.dp)).background(Panel2).padding(horizontal=16.dp), verticalAlignment=Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(program?.title ?: channel.name, fontWeight=FontWeight.SemiBold, maxLines=1); Text(program?.description?.ifBlank { channel.group } ?: channel.group, color=TextMuted, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=12.sp) }
         TvButton({vm.toggleFavorite(channel.id)}) { Icon(if(channel.favorite) Icons.Default.Star else Icons.Default.StarBorder,null,tint=if(channel.favorite) Warning else TextPrimary); Spacer(Modifier.width(6.dp)); Text("Favorite") }
         Spacer(Modifier.width(6.dp)); TvButton({vm.moveChannel(channel.id,-1)}) { Icon(Icons.Default.KeyboardArrowUp,null); Text("Move") }
         Spacer(Modifier.width(6.dp)); TvButton({vm.moveChannel(channel.id,1)}) { Icon(Icons.Default.KeyboardArrowDown,null) }
+        if(previous != null && channel.catchupSource.isNotBlank()) { Spacer(Modifier.width(6.dp)); TvButton({vm.playCatchup(channel,previous)}) { Icon(Icons.Default.Replay,null); Spacer(Modifier.width(4.dp)); Text("Catch-up") } }
+        Spacer(Modifier.width(6.dp)); TvButton({vm.toggleLock(channel.id)}) { Icon(if(channel.locked) Icons.Default.Lock else Icons.Default.LockOpen,null); Spacer(Modifier.width(4.dp)); Text(if(channel.locked) "Locked" else "Lock") }
+        Spacer(Modifier.width(6.dp)); TvButton({vm.addToMultiview(channel.id)}) { Icon(Icons.Default.GridView,null); Spacer(Modifier.width(4.dp)); Text("Multi") }
         Spacer(Modifier.width(6.dp)); TvButton({vm.play(channel.id)}, selected=true) { Icon(Icons.Default.PlayArrow,null); Spacer(Modifier.width(4.dp)); Text("Watch") }
     }
 }
@@ -231,15 +242,62 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable private fun MultiviewScreen(state: UiState, vm: MainViewModel) {
+    val channels = state.multiviewIds.mapNotNull { id -> state.channels.firstOrNull { it.id == id } }
+    var activeId by remember(channels) { mutableStateOf(channels.firstOrNull()?.id) }
+    Column(Modifier.fillMaxSize().padding(22.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column { Text("Multiview", fontSize = 26.sp, fontWeight = FontWeight.SemiBold); Text("Up to four live channels · select a tile for audio", color = TextMuted, fontSize = 13.sp) }
+            Spacer(Modifier.weight(1f)); Text("${channels.size}/4", color = TextMuted)
+        }
+        Spacer(Modifier.height(12.dp))
+        if (channels.isEmpty()) {
+            Column(Modifier.weight(1f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Default.GridView, null, Modifier.size(56.dp), tint = TextMuted); Spacer(Modifier.height(14.dp)); Text("Add channels from the guide", fontSize = 21.sp); Text("Highlight a channel and choose Multi", color = TextMuted)
+            }
+        } else {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                channels.chunked(2).forEach { rowChannels ->
+                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rowChannels.forEach { channel -> MultiTile(channel, channel.id == activeId, { activeId = channel.id }, { vm.removeFromMultiview(channel.id) }, Modifier.weight(1f)) }
+                        if (rowChannels.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+        if (channels.size < 4) {
+            Spacer(Modifier.height(10.dp)); Text("ADD CHANNEL", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { state.visibleChannels.filter { it.id !in state.multiviewIds }.take(6).forEach { channel -> TvButton({vm.addToMultiview(channel.id)}) { Icon(Icons.Default.Add,null,Modifier.size(16.dp));Spacer(Modifier.width(4.dp));Text(channel.name,maxLines=1,overflow=TextOverflow.Ellipsis) } } }
+        }
+    }
+}
+
+@Composable private fun MultiTile(channel: Channel, active: Boolean, onActivate: () -> Unit, onRemove: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var focused by remember { mutableStateOf(false) }
+    val player = remember(channel.url) { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
+    LaunchedEffect(active) { player.volume = if(active) 1f else 0f }
+    DisposableEffect(player) { onDispose { player.release() } }
+    Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.focusable().combinedClickable(onClick=onActivate,onLongClick=onRemove)) {
+        AndroidView(factory={ PlayerView(it).apply { this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1) } },update={it.player=player},modifier=Modifier.fillMaxSize())
+        Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0xCC10151C)).padding(11.dp),verticalAlignment=Alignment.CenterVertically) { if(active) Icon(Icons.AutoMirrored.Filled.VolumeUp,null,tint=Focus,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp));Text(channel.name,Modifier.weight(1f),fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis);Text("Hold to remove",color=TextMuted,fontSize=10.sp) }
+        if(focused || active) Box(Modifier.matchParentSize().border(if(focused) 3.dp else 2.dp, if(focused) Color.White else Focus, RoundedCornerShape(9.dp)))
+    }
+}
+
 @Composable private fun SettingsScreen(state: UiState, vm: MainViewModel) {
+    var parentalPin by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(horizontal=42.dp,vertical=24.dp)) {
         Text("Settings", fontSize=28.sp,fontWeight=FontWeight.SemiBold); Text("Playlist, guide and app preferences",color=TextMuted); Spacer(Modifier.height(22.dp))
         SettingsCard("PLAYLIST") {
-            SettingRow(Icons.Default.PlaylistPlay, state.provider?.name ?: "No playlist", when(state.provider?.type){ProviderType.XTREAM->"Xtream Codes";ProviderType.M3U->"M3U / M3U8";else->""}) { }
-            Divider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Refresh,"Update playlist and EPG",state.status.message,vm::refresh)
+            SettingRow(Icons.AutoMirrored.Filled.PlaylistPlay, state.provider?.name ?: "No playlist", when(state.provider?.type){ProviderType.XTREAM->"Xtream Codes";ProviderType.M3U->"M3U / M3U8";else->""}) { }
+            HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Refresh,"Update playlist and EPG",state.status.message,vm::refresh)
         }
         Spacer(Modifier.height(16.dp)); SettingsCard("TV GUIDE") {
             Column(Modifier.padding(16.dp)) { Text("Automatic update interval",fontWeight=FontWeight.Medium); Text("Default is every 24 hours. Fire OS may run background work later to preserve battery.",color=TextMuted,fontSize=13.sp); Spacer(Modifier.height(12.dp)); Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){ AppSettings.allowedEpgHours.sorted().forEach{h->TvButton({vm.setEpgHours(h)},selected=state.epgHours==h){Text("${h}h")}} } }
+        }
+        Spacer(Modifier.height(16.dp)); SettingsCard("PARENTAL CONTROLS") {
+            Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(state.hasParentalPin) "Change parental PIN" else "Set parental PIN",fontWeight=FontWeight.Medium);Text("Lock individual channels from the guide",color=TextMuted,fontSize=13.sp)};OutlinedTextField(parentalPin,{parentalPin=it.filter(Char::isDigit).take(12)},Modifier.width(180.dp),placeholder={Text("4–12 digits")},singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation());Spacer(Modifier.width(8.dp));TvButton({vm.setParentalPin(parentalPin);parentalPin=""},selected=true){Icon(Icons.Default.Lock,null);Spacer(Modifier.width(5.dp));Text("Save")}}
         }
         Spacer(Modifier.height(16.dp)); SettingsCard("STATUS") {
             Column(Modifier.padding(16.dp)) { StatusLine("Channels",state.channels.size.toString());StatusLine("Programmes",state.programs.size.toString());StatusLine("Last successful update",if(state.status.lastSuccessEpochMs>0) SimpleDateFormat("d MMM, HH:mm",Locale.getDefault()).format(Date(state.status.lastSuccessEpochMs)) else "Never") }
@@ -252,7 +310,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun SettingRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit){TvButton(onClick,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=1)}}}
 @Composable private fun StatusLine(label:String,value:String){Row(Modifier.fillMaxWidth().padding(vertical=5.dp)){Text(label,color=TextMuted);Spacer(Modifier.weight(1f));Text(value,fontWeight=FontWeight.Medium)}}
 
-@Composable private fun SetupScreen(state: UiState, onSave: (ProviderConfig)->Unit) {
+@Composable private fun SetupScreen(onSave: (ProviderConfig)->Unit) {
     var type by remember { mutableStateOf(ProviderType.M3U) }; var name by remember { mutableStateOf("My TV") }; var playlist by remember { mutableStateOf("") }; var server by remember { mutableStateOf("") }; var username by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var epg by remember { mutableStateOf("") }; var validation by remember { mutableStateOf<String?>(null) }
     Row(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.width(420.dp).fillMaxHeight().background(Panel).padding(48.dp),verticalArrangement=Arrangement.Center) {
@@ -274,12 +332,13 @@ class MainActivity : ComponentActivity() {
     val channel=state.playingChannel ?: return
     val context=LocalContext.current
     var controls by remember { mutableStateOf(true) }; var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
-    val player=remember(channel.url){ExoPlayer.Builder(context).build().apply{setMediaItem(MediaItem.fromUri(channel.url));prepare();playWhenReady=true}}
+    val streamUrl = state.playingUrl ?: channel.url
+    val player=remember(streamUrl){ExoPlayer.Builder(context).build().apply{setMediaItem(MediaItem.fromUri(streamUrl));prepare();playWhenReady=true}}
     DisposableEffect(player){onDispose{player.release()}}
     BackHandler{vm.closePlayer()}
     Box(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event -> if(event.nativeKeyEvent.action!=KeyEvent.ACTION_UP)return@onPreviewKeyEvent false;when(event.nativeKeyEvent.keyCode){KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_CHANNEL_UP->{vm.playAdjacent(-1);true};KeyEvent.KEYCODE_DPAD_DOWN,KeyEvent.KEYCODE_CHANNEL_DOWN->{vm.playAdjacent(1);true};KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER->{controls=!controls;true};else->false}}.focusable()) {
         AndroidView(factory={PlayerView(it).apply{this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1)}},update={it.player=player;it.resizeMode=resizeMode},modifier=Modifier.fillMaxSize())
-        AnimatedVisibility(controls,enter=fadeIn(),exit=fadeOut()) { Column(Modifier.fillMaxSize().background(Color(0x66000000)).padding(38.dp)) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)).background(Focus),contentAlignment=Alignment.Center){Text((channel.providerOrder+1).toString(),fontWeight=FontWeight.Bold)};Spacer(Modifier.width(14.dp));Column{Text(channel.name,fontSize=24.sp,fontWeight=FontWeight.SemiBold);Text(channel.group,color=TextMuted)}};Spacer(Modifier.weight(1f));val current=currentAndNext(channel,state.programs).firstOrNull();Text(current?.title?:"Live TV",fontSize=25.sp,fontWeight=FontWeight.SemiBold);Text(current?.description.orEmpty(),color=TextMuted,maxLines=2);Spacer(Modifier.height(16.dp));Row{TvButton({vm.closePlayer()}){Icon(Icons.Default.List,null);Spacer(Modifier.width(7.dp));Text("Guide")};Spacer(Modifier.width(8.dp));TvButton({vm.toggleFavorite(channel.id)}){Icon(if(channel.favorite)Icons.Default.Star else Icons.Default.StarBorder,null,tint=if(channel.favorite)Warning else TextPrimary);Spacer(Modifier.width(7.dp));Text("Favorite")};Spacer(Modifier.width(8.dp));TvButton({resizeMode=if(resizeMode==AspectRatioFrameLayout.RESIZE_MODE_FIT)AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT}){Icon(Icons.Default.AspectRatio,null);Spacer(Modifier.width(7.dp));Text("Aspect")};Spacer(Modifier.weight(1f));Text("▲▼  Change channel    OK  Controls",color=TextMuted,modifier=Modifier.align(Alignment.CenterVertically))} } }
+        AnimatedVisibility(controls,enter=fadeIn(),exit=fadeOut()) { Column(Modifier.fillMaxSize().background(Color(0x66000000)).padding(38.dp)) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)).background(Focus),contentAlignment=Alignment.Center){Text((channel.providerOrder+1).toString(),fontWeight=FontWeight.Bold)};Spacer(Modifier.width(14.dp));Column{Text(channel.name,fontSize=24.sp,fontWeight=FontWeight.SemiBold);Text(channel.group,color=TextMuted)}};Spacer(Modifier.weight(1f));val current=currentAndNext(channel,state.programs).firstOrNull();Text(current?.title?:"Live TV",fontSize=25.sp,fontWeight=FontWeight.SemiBold);Text(current?.description.orEmpty(),color=TextMuted,maxLines=2);Spacer(Modifier.height(16.dp));Row{TvButton({vm.closePlayer()}){Icon(Icons.AutoMirrored.Filled.List,null);Spacer(Modifier.width(7.dp));Text("Guide")};Spacer(Modifier.width(8.dp));TvButton({vm.toggleFavorite(channel.id)}){Icon(if(channel.favorite)Icons.Default.Star else Icons.Default.StarBorder,null,tint=if(channel.favorite)Warning else TextPrimary);Spacer(Modifier.width(7.dp));Text("Favorite")};Spacer(Modifier.width(8.dp));TvButton({resizeMode=if(resizeMode==AspectRatioFrameLayout.RESIZE_MODE_FIT)AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT}){Icon(Icons.Default.AspectRatio,null);Spacer(Modifier.width(7.dp));Text("Aspect")};Spacer(Modifier.weight(1f));Text("▲▼  Change channel    OK  Controls",color=TextMuted,modifier=Modifier.align(Alignment.CenterVertically))} } }
     }
 }
 
@@ -309,6 +368,8 @@ private fun TvButton(
     }
 }
 @Composable private fun EmptyGuide(hasProvider:Boolean,onRefresh:()->Unit){Column(Modifier.fillMaxWidth().padding(70.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Default.LiveTv,null,Modifier.size(50.dp),tint=TextMuted);Spacer(Modifier.height(15.dp));Text(if(hasProvider)"No channels loaded" else "Add a playlist",fontSize=21.sp);Text("Update your playlist to populate the guide",color=TextMuted);Spacer(Modifier.height(16.dp));TvButton(onRefresh,selected=true){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(7.dp));Text("Update now")}}}
+@Composable private fun ParentalPinDialog(onSubmit:(String)->Unit,onCancel:()->Unit){var pin by remember{mutableStateOf("")};AlertDialog(onDismissRequest=onCancel,icon={Icon(Icons.Default.Lock,null)},title={Text("Parental control")},text={Column{Text("Enter the PIN to watch this channel.",color=TextMuted);Spacer(Modifier.height(12.dp));OutlinedTextField(pin,{pin=it.filter(Char::isDigit).take(12)},singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),placeholder={Text("PIN")})}},confirmButton={TvButton({onSubmit(pin)},selected=true){Text("Unlock")}},dismissButton={TvButton(onCancel){Text("Cancel")}})}
 @Composable private fun ErrorBanner(message:String,onDismiss:()->Unit){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.BottomCenter){Surface(Modifier.padding(24.dp).combinedClickable(onClick=onDismiss),shape=RoundedCornerShape(8.dp),color=Color(0xFF632A32),border=BorderStroke(1.dp,Color(0xFFFF7785))){Row(Modifier.padding(15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Error,null);Spacer(Modifier.width(10.dp));Text(message);Spacer(Modifier.width(18.dp));Text("Dismiss",fontWeight=FontWeight.Bold)}}}}
 private fun currentAndNext(channel:Channel,programs:List<Program>):List<Program>{val now=System.currentTimeMillis();val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs>now}.sortedBy{it.startEpochMs}.take(2).toList()}
+private fun lastCatchup(channel:Channel,programs:List<Program>):Program?{if(channel.catchupDays<=0)return null;val now=System.currentTimeMillis();val cutoff=now-channel.catchupDays*86_400_000L;val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs in cutoff..now}.maxByOrNull{it.endEpochMs}}
 private fun time(epoch:Long)=SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(epoch))

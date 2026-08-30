@@ -37,6 +37,20 @@ class AppStore(private val context: Context) {
     fun lastError(): String = prefs.getString("last_error", "").orEmpty()
     fun setLastError(value: String) { prefs.edit().putString("last_error", value).apply() }
 
+    fun hasParentalPin(): Boolean = secure.contains("pin_hash") && secure.contains("pin_salt")
+    fun setParentalPin(pin: String) {
+        val salt = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        secure.edit()
+            .putString("pin_salt", android.util.Base64.encodeToString(salt, android.util.Base64.NO_WRAP))
+            .putString("pin_hash", android.util.Base64.encodeToString(PinHasher.hash(pin, salt), android.util.Base64.NO_WRAP))
+            .apply()
+    }
+    fun verifyParentalPin(pin: String): Boolean = runCatching {
+        val salt = android.util.Base64.decode(secure.getString("pin_salt", ""), android.util.Base64.NO_WRAP)
+        val hash = android.util.Base64.decode(secure.getString("pin_hash", ""), android.util.Base64.NO_WRAP)
+        PinHasher.verify(pin, salt, hash)
+    }.getOrDefault(false)
+
     private fun writeArray(file: File, values: List<JSONObject>) {
         val temp = File(file.parentFile, file.name + ".tmp")
         temp.writeText(JSONArray(values).toString())
@@ -50,8 +64,8 @@ class AppStore(private val context: Context) {
 
     private fun providerToJson(p: ProviderConfig) = JSONObject().put("type", p.type.name).put("name", p.name).put("playlistUrl", p.playlistUrl).put("serverUrl", p.serverUrl).put("username", p.username).put("password", p.password).put("epgUrl", p.epgUrl)
     private fun providerFromJson(raw: String): ProviderConfig? = runCatching { JSONObject(raw).let { ProviderConfig(ProviderType.valueOf(it.getString("type")), it.optString("name", "Playlist"), it.optString("playlistUrl"), it.optString("serverUrl"), it.optString("username"), it.optString("password"), it.optString("epgUrl")) } }.getOrNull()
-    private fun channelToJson(c: Channel) = JSONObject().put("id",c.id).put("name",c.name).put("url",c.url).put("group",c.group).put("tvgId",c.tvgId).put("logo",c.logoUrl).put("providerOrder",c.providerOrder).put("manualRank",c.manualRank ?: JSONObject.NULL).put("favorite",c.favorite).put("hidden",c.hidden)
-    private fun channelFromJson(o: JSONObject): Channel? = runCatching { Channel(o.getString("id"),o.getString("name"),o.getString("url"),o.optString("group","Other"),o.optString("tvgId"),o.optString("logo"),o.optInt("providerOrder"),if(o.isNull("manualRank")) null else o.getLong("manualRank"),o.optBoolean("favorite"),o.optBoolean("hidden")) }.getOrNull()
+    private fun channelToJson(c: Channel) = JSONObject().put("id",c.id).put("name",c.name).put("url",c.url).put("group",c.group).put("tvgId",c.tvgId).put("logo",c.logoUrl).put("providerOrder",c.providerOrder).put("manualRank",c.manualRank ?: JSONObject.NULL).put("favorite",c.favorite).put("hidden",c.hidden).put("locked",c.locked).put("catchupSource",c.catchupSource).put("catchupDays",c.catchupDays)
+    private fun channelFromJson(o: JSONObject): Channel? = runCatching { Channel(o.getString("id"),o.getString("name"),o.getString("url"),o.optString("group","Other"),o.optString("tvgId"),o.optString("logo"),o.optInt("providerOrder"),if(o.isNull("manualRank")) null else o.getLong("manualRank"),o.optBoolean("favorite"),o.optBoolean("hidden"),o.optBoolean("locked"),o.optString("catchupSource"),o.optInt("catchupDays")) }.getOrNull()
     private fun programToJson(p: Program) = JSONObject().put("channelId",p.channelId).put("title",p.title).put("description",p.description).put("start",p.startEpochMs).put("end",p.endEpochMs)
     private fun programFromJson(o: JSONObject): Program? = runCatching { Program(o.getString("channelId"),o.getString("title"),o.optString("description"),o.getLong("start"),o.getLong("end")) }.getOrNull()
 }

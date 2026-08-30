@@ -15,7 +15,8 @@ object ChannelReconciler {
             if (saved != null) incoming.copy(
                 manualRank = saved.manualRank,
                 favorite = saved.favorite,
-                hidden = saved.hidden
+                hidden = saved.hidden,
+                locked = saved.locked
             ) else incoming.copy(manualRank = nextRank.also { nextRank += 1000L })
         }
     }

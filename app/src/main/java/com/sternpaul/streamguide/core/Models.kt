@@ -10,7 +10,10 @@ data class Channel(
     val providerOrder: Int = 0,
     val manualRank: Long? = null,
     val favorite: Boolean = false,
-    val hidden: Boolean = false
+    val hidden: Boolean = false,
+    val locked: Boolean = false,
+    val catchupSource: String = "",
+    val catchupDays: Int = 0
 )
 
 data class Program(

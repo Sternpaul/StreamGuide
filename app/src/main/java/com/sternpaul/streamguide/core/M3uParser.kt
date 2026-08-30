@@ -27,7 +27,9 @@ object M3uParser {
                         group = attrs["group-title"].orEmpty().ifBlank { "Other" },
                         tvgId = tvgId,
                         logoUrl = attrs["tvg-logo"].orEmpty(),
-                        providerOrder = channels.size
+                        providerOrder = channels.size,
+                        catchupSource = attrs["catchup-source"].orEmpty(),
+                        catchupDays = (attrs["catchup-days"] ?: attrs["timeshift"]).orEmpty().toIntOrNull() ?: 0
                     )
                     i = j
                 }
