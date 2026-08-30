@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="default_epg_refresh_interval_hours">24</string>
+    <integer name="default_epg_refresh_interval_hours_int">24</integer>
+    <bool name="enable_debug_logging">false</bool>
+</resources>

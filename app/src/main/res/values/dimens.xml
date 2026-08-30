@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="spacing_xs">4dp</dimen>
+    <dimen name="spacing_sm">8dp</dimen>
+    <dimen name="spacing_md">16dp</dimen>
+    <dimen name="spacing_lg">24dp</dimen>
+    <dimen name="spacing_xl">32dp</dimen>
+    <dimen name="guide_channel_width">280dp</dimen>
+    <dimen name="guide_row_height">80dp</dimen>
+    <dimen name="guide_time_width">60dp</dimen>
+    <dimen name="program_min_width">40dp</dimen>
+    <dimen name="focus_scale">1.05</dimen>
+    <dimen name="icon_size_sm">24dp</dimen>
+    <dimen name="icon_size_md">32dp</dimen>
+    <dimen name="icon_size_lg">48dp</dimen>
+</resources>
