@@ -11,7 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppScreen { GUIDE, SEARCH, SETTINGS, MULTIVIEW, PLAYER, SETUP }
+enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
 
 data class UiState(
@@ -32,7 +32,9 @@ data class UiState(
     val query: String = "",
     val multiviewIds: List<String> = emptyList(),
     val hasParentalPin: Boolean = false,
-    val pendingPinChannelId: String? = null
+    val pendingPinChannelId: String? = null,
+    val timelineStart: Long = System.currentTimeMillis() / 1_800_000L * 1_800_000L,
+    val selectedProgram: Program? = null
 ) {
     val groups: List<String> get() = listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.group }.distinct().sorted()
     val visibleChannels: List<Channel> get() {
@@ -76,6 +78,9 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun navigate(screen: AppScreen) { state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "") }
     fun selectGroup(group: String) { state = state.copy(selectedGroup = group, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.group == group }?.id) }
     fun selectChannel(id: String) { state = state.copy(selectedChannelId = id) }
+    fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program) }
+    fun shiftTimeline(hours: Int) { state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null) }
+    fun jumpTimelineToNow() { state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null) }
     fun play(id: String) {
         val channel = state.channels.firstOrNull { it.id == id } ?: return
         state = if (channel.locked && state.hasParentalPin) state.copy(pendingPinChannelId = id) else state.copy(playingChannelId = id, playingUrl = channel.url, selectedChannelId = id, screen = AppScreen.PLAYER)
@@ -130,6 +135,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
 
     fun toggleFavorite(id: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(favorite = !it.favorite) else it } }
     fun moveChannel(id: String, delta: Int) = mutateChannels { ChannelReconciler.move(it, id, delta) }
+    fun moveChannelTo(id: String, oneBasedPosition: Int) = mutateChannels { ChannelReconciler.moveTo(it, id, oneBasedPosition) }
+    fun toggleHidden(id: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(hidden = !it.hidden) else it } }
     fun hideChannel(id: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(hidden = true) else it } }
     private fun mutateChannels(change: (List<Channel>) -> List<Channel>) {
         val changed = change(state.channels); state = state.copy(channels = changed); viewModelScope.launch(Dispatchers.IO) { store.saveChannels(changed) }

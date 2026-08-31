@@ -21,6 +21,16 @@ object ChannelReconciler {
         }
     }
 
+    fun moveTo(channels: List<Channel>, channelId: String, oneBasedPosition: Int): List<Channel> {
+        val ordered = channels.sortedWith(ChannelOrdering.manual).toMutableList()
+        val from = ordered.indexOfFirst { it.id == channelId }
+        if (from < 0 || ordered.isEmpty()) return channels
+        val item = ordered.removeAt(from)
+        val to = (oneBasedPosition - 1).coerceIn(0, ordered.size)
+        ordered.add(to, item)
+        return ordered.mapIndexed { index, channel -> channel.copy(manualRank = (index + 1) * 1000L) }
+    }
+
     fun move(channels: List<Channel>, channelId: String, delta: Int): List<Channel> {
         val ordered = channels.sortedWith(ChannelOrdering.manual).toMutableList()
         val from = ordered.indexOfFirst { it.id == channelId }

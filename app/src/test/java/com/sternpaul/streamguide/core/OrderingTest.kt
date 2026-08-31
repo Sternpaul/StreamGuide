@@ -9,4 +9,13 @@ class OrderingTest {
   assertEquals(listOf("b","a","c"), result.sortedWith(ChannelOrdering.manual).map { it.id })
  }
  @Test fun removedChannelDoesNotCorruptRanks() { val result=ChannelReconciler.reconcile(listOf(Channel("a","A","u","G",manualRank=10)), emptyList()); assertTrue(result.isEmpty()) }
+ @Test fun movesChannelToAnAbsoluteOneBasedPosition() {
+  val channels = listOf("a", "b", "c", "d").mapIndexed { index, id -> Channel(id, id.uppercase(), "u", manualRank = (index + 1) * 1000L) }
+  val result = ChannelReconciler.moveTo(channels, "d", 2)
+  assertEquals(listOf("a", "d", "b", "c"), result.sortedWith(ChannelOrdering.manual).map { it.id })
+ }
+ @Test fun absolutePositionIsClampedToTheList() {
+  val channels = listOf(Channel("a", "A", "u", manualRank = 1000), Channel("b", "B", "u", manualRank = 2000))
+  assertEquals(listOf("b", "a"), ChannelReconciler.moveTo(channels, "a", 99).sortedWith(ChannelOrdering.manual).map { it.id })
+ }
 }

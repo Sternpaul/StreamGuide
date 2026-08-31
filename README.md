@@ -8,9 +8,11 @@ A private, local-only live IPTV player for Fire TV, designed for the Fire TV Sti
 - XMLTV/XMLTV.gz guide import
 - Configurable automatic EPG update interval (24 hours by default)
 - Last-good-data retention when playlist or EPG refresh fails
-- Dense remote-first live guide inspired by TiviMate
+- Dense remote-first three-hour EPG timeline with two-hour/day paging and instant return to Now
+- Focusable programme cells with details, date/time, descriptions, live playback, and historical catch-up
 - Channel groups, favorites, search, current/next programmes
 - Persistent manual channel ordering that survives provider refreshes
+- Channel manager with filtering, hide/restore, single-step, ten-step, top/bottom, and exact-position movement
 - Full-screen Media3 playback, channel up/down, and aspect-ratio control
 - Catch-up playback for M3U/Xtream playlists that expose `catchup-source` metadata
 - Two-to-four-channel Multiview with selectable audio

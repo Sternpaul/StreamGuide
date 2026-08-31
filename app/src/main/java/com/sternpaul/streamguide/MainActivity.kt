@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
                     AppScreen.SEARCH -> SearchScreen(state, vm)
                     AppScreen.MULTIVIEW -> MultiviewScreen(state, vm)
                     AppScreen.SETTINGS -> SettingsScreen(state, vm)
+                    AppScreen.ORGANIZE -> OrganizeScreen(state, vm)
                     else -> Unit
                 }
             }
@@ -117,7 +118,7 @@ class MainActivity : ComponentActivity() {
         NavButton("Live TV", Icons.Default.LiveTv, state.screen == AppScreen.GUIDE) { vm.navigate(AppScreen.GUIDE) }
         NavButton("Search", Icons.Default.Search, state.screen == AppScreen.SEARCH) { vm.navigate(AppScreen.SEARCH) }
         NavButton("Multiview", Icons.Default.GridView, state.screen == AppScreen.MULTIVIEW) { vm.navigate(AppScreen.MULTIVIEW) }
-        NavButton("Settings", Icons.Default.Settings, state.screen == AppScreen.SETTINGS) { vm.navigate(AppScreen.SETTINGS) }
+        NavButton("Settings", Icons.Default.Settings, state.screen == AppScreen.SETTINGS || state.screen == AppScreen.ORGANIZE) { vm.navigate(AppScreen.SETTINGS) }
         Spacer(Modifier.weight(1f))
         if (state.loading) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(12.dp)); Text("Updating", color = TextMuted, fontSize = 14.sp) }
         Spacer(Modifier.width(22.dp)); Clock()
@@ -144,14 +145,20 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.weight(1f)) {
             GuideToolbar(state, vm)
             Spacer(Modifier.height(10.dp))
-            GuideHeader()
+            GuideHeader(state.timelineStart, vm)
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 items(state.visibleChannels, key = { it.id }) { channel ->
-                    GuideChannelRow(channel, currentAndNext(channel, state.programs), channel.id == state.selectedChannelId, vm)
+                    TimelineChannelRow(channel, state.programs, state.timelineStart, channel.id == state.selectedChannelId, vm)
                 }
                 if (state.visibleChannels.isEmpty()) item { EmptyGuide(state.provider != null, vm::refresh) }
             }
-            state.selectedChannelId?.let { id -> state.channels.firstOrNull { it.id == id }?.let { SelectedChannelBar(it, currentAndNext(it, state.programs).firstOrNull(), lastCatchup(it, state.programs), vm) } }
+            state.selectedChannelId?.let { id ->
+                state.channels.firstOrNull { it.id == id }?.let { channel ->
+                    val selected = state.selectedProgram?.takeIf { it.channelId == channel.id || it.channelId == channel.tvgId }
+                    if (selected != null) ProgrammeDetailsBar(channel, selected, vm)
+                    else SelectedChannelBar(channel, currentAndNext(channel, state.programs).firstOrNull(), lastCatchup(channel, state.programs), vm)
+                }
+            }
         }
     }
 }
@@ -179,11 +186,77 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun GuideHeader() {
-    val rounded = System.currentTimeMillis() / 1_800_000 * 1_800_000
-    Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("CHANNEL", Modifier.width(270.dp).padding(start=18.dp), color=TextMuted, fontSize=11.sp, fontWeight=FontWeight.Bold)
-        repeat(3) { index -> Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(rounded + index * 1_800_000)), Modifier.weight(1f), color=TextMuted, fontSize=12.sp) }
+@Composable private fun GuideHeader(windowStart: Long, vm: MainViewModel) {
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.width(270.dp), verticalAlignment = Alignment.CenterVertically) {
+            TvButton({ vm.shiftTimeline(-24) }) { Icon(Icons.Default.KeyboardDoubleArrowLeft, null, Modifier.size(17.dp)) }
+            Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(-2) }) { Icon(Icons.Default.ChevronLeft, null, Modifier.size(17.dp)) }
+            Spacer(Modifier.width(4.dp)); TvButton(vm::jumpTimelineToNow, selected = true) { Text("Now", fontSize = 12.sp) }
+            Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(2) }) { Icon(Icons.Default.ChevronRight, null, Modifier.size(17.dp)) }
+            Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(24) }) { Icon(Icons.Default.KeyboardDoubleArrowRight, null, Modifier.size(17.dp)) }
+        }
+        repeat(6) { index ->
+            val instant = windowStart + index * 1_800_000L
+            Column(Modifier.weight(1f).padding(start = 6.dp)) {
+                if (index == 0) Text(SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(instant)), color = Focus, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(time(instant), color = TextMuted, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, selected: Boolean, vm: MainViewModel) {
+    val windowEnd = windowStart + 3 * 3_600_000L
+    val slices = GuideTimeline.slices(channel, programs, windowStart, windowEnd)
+    Row(Modifier.fillMaxWidth().height(68.dp), verticalAlignment = Alignment.CenterVertically) {
+        var channelFocused by remember { mutableStateOf(false) }
+        Row(
+            Modifier.width(270.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                .background(if (channelFocused || selected) Color(0xFF1C2D43) else Panel)
+                .onFocusChanged { channelFocused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, null) }
+                .focusable().combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
+                .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.width(3.dp).fillMaxHeight().background(if (channelFocused || selected) Focus else Color.Transparent)); Spacer(Modifier.width(9.dp))
+            Text((channel.providerOrder + 1).toString(), Modifier.width(32.dp), color = TextMuted, fontSize = 12.sp)
+            if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(36.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.name.take(1), fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.width(9.dp)); Text(channel.name, Modifier.weight(1f), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (channel.favorite) Icon(Icons.Default.Star, null, tint = Warning, modifier = Modifier.size(14.dp))
+            if (channel.locked) Icon(Icons.Default.Lock, null, tint = TextMuted, modifier = Modifier.size(14.dp))
+        }
+        Spacer(Modifier.width(3.dp))
+        Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            slices.forEach { slice ->
+                val weight = (slice.visibleEnd - slice.visibleStart).coerceAtLeast(1L).toFloat()
+                if (slice.program == null) {
+                    Box(Modifier.weight(weight).fillMaxHeight().clip(RoundedCornerShape(5.dp)).background(Panel))
+                } else {
+                    TimelineProgramCell(channel, slice.program, weight, vm)
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun RowScope.TimelineProgramCell(channel: Channel, program: Program, weight: Float, vm: MainViewModel) {
+    var focused by remember { mutableStateOf(false) }
+    val now = System.currentTimeMillis()
+    val active = now in program.startEpochMs until program.endEpochMs
+    val past = program.endEpochMs <= now
+    Column(
+        Modifier.weight(weight).fillMaxHeight().clip(RoundedCornerShape(5.dp))
+            .background(if (focused) Color(0xFF29496F) else if (active) Color(0xFF1A3658) else Panel2)
+            .border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, program) }
+            .focusable().combinedClickable(onClick = { vm.selectProgram(channel.id, program) })
+            .padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.Center
+    ) {
+        Text(program.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${time(program.startEpochMs)}–${time(program.endEpochMs)}", color = TextMuted, fontSize = 10.sp)
+            if (past && channel.catchupSource.isNotBlank()) { Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Replay, null, tint = Focus, modifier = Modifier.size(12.dp)) }
+        }
+        if (active) LinearProgressIndicator(progress = { ((now - program.startEpochMs).toFloat() / (program.endEpochMs - program.startEpochMs)).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp), color = Focus, trackColor = Color(0xFF32465E))
     }
 }
 
@@ -217,6 +290,28 @@ class MainActivity : ComponentActivity() {
         Text(program?.title ?: "No programme information", color=if(program==null) TextMuted else TextPrimary, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=15.sp)
         if(program!=null) Text("${time(program.startEpochMs)} – ${time(program.endEpochMs)}", color=TextMuted, fontSize=11.sp)
         if(active) LinearProgressIndicator(progress={((now-program!!.startEpochMs).toFloat()/(program.endEpochMs-program.startEpochMs)).coerceIn(0f,1f)}, Modifier.fillMaxWidth().padding(top=5.dp).height(2.dp), color=Focus, trackColor=Color(0xFF32465E))
+    }
+}
+
+@Composable private fun ProgrammeDetailsBar(channel: Channel, program: Program, vm: MainViewModel) {
+    val now = System.currentTimeMillis()
+    val past = program.endEpochMs <= now
+    val live = now in program.startEpochMs until program.endEpochMs
+    Row(Modifier.fillMaxWidth().height(88.dp).padding(top = 8.dp).clip(RoundedCornerShape(9.dp)).background(Panel2).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(program.title, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.width(10.dp)); Text("${SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(program.startEpochMs))}  ${time(program.startEpochMs)}–${time(program.endEpochMs)}", color = if (live) Focus else TextMuted, fontSize = 12.sp)
+            }
+            Text(program.description.ifBlank { channel.name }, color = TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+        }
+        if (past && channel.catchupSource.isNotBlank() && channel.catchupDays > 0) {
+            TvButton({ vm.playCatchup(channel, program) }, selected = true) { Icon(Icons.Default.Replay, null); Spacer(Modifier.width(6.dp)); Text("Play catch-up") }
+        } else if (live) {
+            TvButton({ vm.play(channel.id) }, selected = true) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Watch live") }
+        } else {
+            Text("Upcoming", color = TextMuted, fontSize = 13.sp)
+        }
     }
 }
 
@@ -285,12 +380,54 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable private fun OrganizeScreen(state: UiState, vm: MainViewModel) {
+    var filter by remember { mutableStateOf("") }
+    var targetPosition by remember { mutableStateOf("") }
+    val ordered = state.channels.sortedWith(ChannelOrdering.manual).filter { filter.isBlank() || it.name.contains(filter, true) }
+    val selectedId = state.selectedChannelId ?: ordered.firstOrNull()?.id
+    val selectedIndex = state.channels.sortedWith(ChannelOrdering.manual).indexOfFirst { it.id == selectedId }
+    Column(Modifier.fillMaxSize().padding(horizontal = 30.dp, vertical = 20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column { Text("Manage channels", fontSize = 27.sp, fontWeight = FontWeight.SemiBold); Text("Manual order and visibility are retained after provider updates", color = TextMuted, fontSize = 13.sp) }
+            Spacer(Modifier.weight(1f)); OutlinedTextField(filter, { filter = it }, Modifier.width(300.dp), placeholder = { Text("Filter channels") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true)
+            Spacer(Modifier.width(8.dp)); TvButton({ vm.navigate(AppScreen.SETTINGS) }) { Icon(Icons.Default.Close, null); Spacer(Modifier.width(5.dp)); Text("Done") }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Panel).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (selectedIndex >= 0) "Selected position ${selectedIndex + 1} of ${state.channels.size}" else "Select a channel", color = TextMuted, modifier = Modifier.weight(1f))
+            TvButton({ selectedId?.let { vm.moveChannelTo(it, 1) } }) { Icon(Icons.Default.VerticalAlignTop, null); Text("Top") }
+            Spacer(Modifier.width(6.dp)); TvButton({ selectedId?.let { vm.moveChannel(it, -10) } }) { Text("−10") }
+            Spacer(Modifier.width(6.dp)); TvButton({ selectedId?.let { vm.moveChannel(it, 10) } }) { Text("+10") }
+            Spacer(Modifier.width(6.dp)); TvButton({ selectedId?.let { vm.moveChannelTo(it, state.channels.size) } }) { Icon(Icons.Default.VerticalAlignBottom, null); Text("Bottom") }
+            Spacer(Modifier.width(10.dp)); OutlinedTextField(targetPosition, { targetPosition = it.filter(Char::isDigit).take(5) }, Modifier.width(120.dp), placeholder = { Text("Position") }, singleLine = true)
+            Spacer(Modifier.width(6.dp)); TvButton({ val target = targetPosition.toIntOrNull(); if (target != null) selectedId?.let { vm.moveChannelTo(it, target) } }, selected = true) { Text("Move") }
+        }
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(ordered, key = { it.id }) { channel ->
+                val actualPosition = state.channels.sortedWith(ChannelOrdering.manual).indexOfFirst { it.id == channel.id } + 1
+                var focused by remember { mutableStateOf(false) }
+                Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(7.dp)).background(if (focused || selectedId == channel.id) Color(0xFF1C2D43) else Panel)
+                    .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectChannel(channel.id) }.focusable().combinedClickable(onClick = { vm.selectChannel(channel.id) }).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(actualPosition.toString(), Modifier.width(52.dp), color = TextMuted)
+                    if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(34.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.name.take(1)) }
+                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(channel.name, color = if (channel.hidden) TextMuted else TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(channel.group, color = TextMuted, fontSize = 11.sp) }
+                    TvButton({ vm.moveChannel(channel.id, -1) }) { Icon(Icons.Default.KeyboardArrowUp, null) }
+                    Spacer(Modifier.width(5.dp)); TvButton({ vm.moveChannel(channel.id, 1) }) { Icon(Icons.Default.KeyboardArrowDown, null) }
+                    Spacer(Modifier.width(5.dp)); TvButton({ vm.toggleHidden(channel.id) }, selected = !channel.hidden) { Icon(if (channel.hidden) Icons.Default.VisibilityOff else Icons.Default.Visibility, null); Spacer(Modifier.width(5.dp)); Text(if (channel.hidden) "Hidden" else "Visible") }
+                }
+            }
+        }
+    }
+}
+
 @Composable private fun SettingsScreen(state: UiState, vm: MainViewModel) {
     var parentalPin by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(horizontal=42.dp,vertical=24.dp)) {
         Text("Settings", fontSize=28.sp,fontWeight=FontWeight.SemiBold); Text("Playlist, guide and app preferences",color=TextMuted); Spacer(Modifier.height(22.dp))
         SettingsCard("PLAYLIST") {
             SettingRow(Icons.AutoMirrored.Filled.PlaylistPlay, state.provider?.name ?: "No playlist", when(state.provider?.type){ProviderType.XTREAM->"Xtream Codes";ProviderType.M3U->"M3U / M3U8";else->""}) { }
+            HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Tune,"Manage channels","Reorder, move to position, hide and restore") { vm.navigate(AppScreen.ORGANIZE) }
             HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Refresh,"Update playlist and EPG",state.status.message,vm::refresh)
         }
         Spacer(Modifier.height(16.dp)); SettingsCard("TV GUIDE") {
