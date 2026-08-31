@@ -4,11 +4,12 @@ A private, local-only live IPTV player for Fire TV, designed for the Fire TV Sti
 
 ## Included
 
-- M3U/M3U8 URL and Xtream Codes live-TV providers
+- M3U/M3U8 URL or local-file import and Xtream Codes live-TV providers
+- Configurable provider user-agent and HTTP referer headers
 - XMLTV/XMLTV.gz guide import
 - Configurable automatic EPG update interval (24 hours by default)
 - Last-good-data retention when playlist or EPG refresh fails
-- Dense remote-first three-hour EPG timeline with two-hour/day paging and instant return to Now
+- Dense remote-first two-, three-, or six-hour EPG timeline with zoom, highlighted Now slot, two-hour/day paging and instant return to Now
 - Focusable programme cells with details, date/time, descriptions, live playback, and historical catch-up
 - Channel groups, favorites, search, current/next programmes
 - Persistent manual channel ordering that survives provider refreshes
@@ -18,7 +19,7 @@ A private, local-only live IPTV player for Fire TV, designed for the Fire TV Sti
 - Editable provider connection without clearing local organization
 - Custom channel names and custom groups that survive provider refreshes
 - Catch-up playback for M3U/Xtream playlists that expose `catchup-source` metadata
-- Two-to-four-channel Multiview with selectable audio
+- Two-to-four-channel Multiview with selectable audio and a saved layout
 - Parental PIN and persistent per-channel locks
 - Encrypted provider credentials and local-only playlist/EPG storage
 - Fire TV launcher banner and remote-only navigation

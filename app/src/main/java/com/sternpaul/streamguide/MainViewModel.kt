@@ -34,6 +34,7 @@ data class UiState(
     val hasParentalPin: Boolean = false,
     val pendingPinChannelId: String? = null,
     val timelineStart: Long = System.currentTimeMillis() / 1_800_000L * 1_800_000L,
+    val timelineHours: Int = 3,
     val selectedProgram: Program? = null,
     val recentChannelIds: List<String> = emptyList()
 ) {
@@ -71,7 +72,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             screen = if (provider == null) AppScreen.SETUP else AppScreen.GUIDE,
             provider = provider, channels = channels, programs = programs,
             selectedChannelId = channels.firstOrNull()?.id,
-            epgHours = store.epgHours(), hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(),
+            epgHours = store.epgHours(), hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, programs.size)
         )
     }
@@ -82,6 +83,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program) }
     fun shiftTimeline(hours: Int) { state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null) }
     fun jumpTimelineToNow() { state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null) }
+    fun cycleTimelineZoom() { state = state.copy(timelineHours = when (state.timelineHours) { 2 -> 3; 3 -> 6; else -> 2 }) }
     fun play(id: String) {
         val channel = state.channels.firstOrNull { it.id == id } ?: return
         if (channel.locked && state.hasParentalPin) {
@@ -120,9 +122,10 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun addToMultiview(id: String) {
         if (state.channels.firstOrNull { it.id == id }?.locked == true) { state = state.copy(error = "Unlock this channel before adding it to Multiview"); return }
         val ids = (state.multiviewIds + id).distinct().take(4)
+        store.saveMultiviewChannelIds(ids)
         state = state.copy(multiviewIds = ids, screen = AppScreen.MULTIVIEW)
     }
-    fun removeFromMultiview(id: String) { state = state.copy(multiviewIds = state.multiviewIds - id) }
+    fun removeFromMultiview(id: String) { val ids = state.multiviewIds - id; store.saveMultiviewChannelIds(ids); state = state.copy(multiviewIds = ids) }
     fun setQuery(value: String) { state = state.copy(query = value) }
     fun setSort(sort: ChannelSort) { state = state.copy(sort = sort) }
     fun clearError() { state = state.copy(error = null) }

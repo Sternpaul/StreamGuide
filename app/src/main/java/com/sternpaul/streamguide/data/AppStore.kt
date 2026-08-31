@@ -29,6 +29,7 @@ class AppStore(private val context: Context) {
     fun saveChannels(channels: List<Channel>) = writeArray(channelsFile, channels.map(::channelToJson))
     fun getPrograms(): List<Program> = readArray(programsFile).mapNotNull(::programFromJson)
     fun savePrograms(programs: List<Program>) = writeArray(programsFile, programs.map(::programToJson))
+    fun openContentUri(uri: String) = context.contentResolver.openInputStream(android.net.Uri.parse(uri)) ?: error("Cannot open selected playlist file")
 
     fun epgHours(): Int = prefs.getInt("epg_hours", AppSettings.DEFAULT_EPG_HOURS).takeIf { it in AppSettings.allowedEpgHours } ?: AppSettings.DEFAULT_EPG_HOURS
     fun setEpgHours(hours: Int) { require(hours in AppSettings.allowedEpgHours); prefs.edit().putInt("epg_hours", hours).apply() }
@@ -38,6 +39,8 @@ class AppStore(private val context: Context) {
     fun setLastError(value: String) { prefs.edit().putString("last_error", value).apply() }
     fun recentChannelIds(): List<String> = prefs.getString("recent_channels", "").orEmpty().split('|').filter { it.isNotBlank() }
     fun saveRecentChannelIds(ids: List<String>) { prefs.edit().putString("recent_channels", ids.take(30).joinToString("|")).apply() }
+    fun multiviewChannelIds(): List<String> = prefs.getString("multiview_channels", "").orEmpty().split('|').filter { it.isNotBlank() }
+    fun saveMultiviewChannelIds(ids: List<String>) { prefs.edit().putString("multiview_channels", ids.take(4).joinToString("|")).apply() }
 
     fun hasParentalPin(): Boolean = secure.contains("pin_hash") && secure.contains("pin_salt")
     fun setParentalPin(pin: String) {
@@ -64,8 +67,8 @@ class AppStore(private val context: Context) {
         (0 until array.length()).map { array.getJSONObject(it) }
     }.getOrElse { emptyList() }
 
-    private fun providerToJson(p: ProviderConfig) = JSONObject().put("type", p.type.name).put("name", p.name).put("playlistUrl", p.playlistUrl).put("serverUrl", p.serverUrl).put("username", p.username).put("password", p.password).put("epgUrl", p.epgUrl)
-    private fun providerFromJson(raw: String): ProviderConfig? = runCatching { JSONObject(raw).let { ProviderConfig(ProviderType.valueOf(it.getString("type")), it.optString("name", "Playlist"), it.optString("playlistUrl"), it.optString("serverUrl"), it.optString("username"), it.optString("password"), it.optString("epgUrl")) } }.getOrNull()
+    private fun providerToJson(p: ProviderConfig) = JSONObject().put("type", p.type.name).put("name", p.name).put("playlistUrl", p.playlistUrl).put("serverUrl", p.serverUrl).put("username", p.username).put("password", p.password).put("epgUrl", p.epgUrl).put("userAgent",p.userAgent).put("referer",p.referer)
+    private fun providerFromJson(raw: String): ProviderConfig? = runCatching { JSONObject(raw).let { ProviderConfig(ProviderType.valueOf(it.getString("type")), it.optString("name", "Playlist"), it.optString("playlistUrl"), it.optString("serverUrl"), it.optString("username"), it.optString("password"), it.optString("epgUrl"), it.optString("userAgent"), it.optString("referer")) } }.getOrNull()
     private fun channelToJson(c: Channel) = JSONObject().put("id",c.id).put("name",c.name).put("url",c.url).put("group",c.group).put("tvgId",c.tvgId).put("logo",c.logoUrl).put("providerOrder",c.providerOrder).put("manualRank",c.manualRank ?: JSONObject.NULL).put("favorite",c.favorite).put("hidden",c.hidden).put("locked",c.locked).put("catchupSource",c.catchupSource).put("catchupDays",c.catchupDays).put("customName",c.customName).put("customGroup",c.customGroup)
     private fun channelFromJson(o: JSONObject): Channel? = runCatching { Channel(o.getString("id"),o.getString("name"),o.getString("url"),o.optString("group","Other"),o.optString("tvgId"),o.optString("logo"),o.optInt("providerOrder"),if(o.isNull("manualRank")) null else o.getLong("manualRank"),o.optBoolean("favorite"),o.optBoolean("hidden"),o.optBoolean("locked"),o.optString("catchupSource"),o.optInt("catchupDays"),o.optString("customName"),o.optString("customGroup")) }.getOrNull()
     private fun programToJson(p: Program) = JSONObject().put("channelId",p.channelId).put("title",p.title).put("description",p.description).put("start",p.startEpochMs).put("end",p.endEpochMs)

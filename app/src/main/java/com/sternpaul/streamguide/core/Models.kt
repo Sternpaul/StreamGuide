@@ -38,7 +38,9 @@ data class ProviderConfig(
     val serverUrl: String = "",
     val username: String = "",
     val password: String = "",
-    val epgUrl: String = ""
+    val epgUrl: String = "",
+    val userAgent: String = "",
+    val referer: String = ""
 )
 
 data class RefreshStatus(

@@ -16,7 +16,7 @@ class PlaylistRepository(private val store: AppStore) {
     suspend fun refreshAll(): RefreshStatus = withContext(Dispatchers.IO) {
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
-            val playlistText = download(ProviderEndpoints.playlist(provider)).use { it.readLimitedText(50 * 1024 * 1024) }
+            val playlistText = download(provider, ProviderEndpoints.playlist(provider)).use { it.readLimitedText(50 * 1024 * 1024) }
             val parsed = M3uParser.parse(playlistText)
             require(parsed.isNotEmpty()) { "Playlist contained no valid live channels" }
             val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
@@ -40,7 +40,7 @@ class PlaylistRepository(private val store: AppStore) {
 
     private fun refreshEpgInternal(provider: ProviderConfig): List<Program> {
         val url = ProviderEndpoints.epg(provider).ifBlank { return store.getPrograms() }
-        val response = client.newCall(Request.Builder().url(url).header("User-Agent", "StreamGuide/0.1 FireTV").build()).execute()
+        val response = client.newCall(request(provider, url)).execute()
         response.use {
             if (!it.isSuccessful) error("EPG HTTP ${it.code}")
             val body = it.body ?: error("Empty EPG response")
@@ -53,10 +53,17 @@ class PlaylistRepository(private val store: AppStore) {
         }
     }
 
-    private fun download(url: String): InputStream {
-        val response = client.newCall(Request.Builder().url(url).header("User-Agent", "StreamGuide/0.1 FireTV").build()).execute()
+    private fun download(provider: ProviderConfig, url: String): InputStream {
+        if (url.startsWith("content://")) return store.openContentUri(url)
+        val response = client.newCall(request(provider, url)).execute()
         if (!response.isSuccessful) { response.close(); error("Playlist HTTP ${response.code}") }
         return response.body?.byteStream() ?: error("Empty playlist response")
+    }
+
+    private fun request(provider: ProviderConfig, url: String): Request {
+        val builder = Request.Builder().url(url)
+        ProviderHeaders.forProvider(provider).forEach { (name, value) -> builder.header(name, value) }
+        return builder.build()
     }
 
     private fun InputStream.readLimitedText(limit: Int): String {

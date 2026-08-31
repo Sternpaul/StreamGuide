@@ -147,10 +147,10 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.weight(1f)) {
             GuideToolbar(state, vm)
             Spacer(Modifier.height(10.dp))
-            GuideHeader(state.timelineStart, vm)
+            GuideHeader(state.timelineStart, state.timelineHours, vm)
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 items(state.visibleChannels, key = { it.id }) { channel ->
-                    TimelineChannelRow(channel, state.programs, state.timelineStart, channel.id == state.selectedChannelId, vm)
+                    TimelineChannelRow(channel, state.programs, state.timelineStart, state.timelineHours, channel.id == state.selectedChannelId, vm)
                 }
                 if (state.visibleChannels.isEmpty()) item { EmptyGuide(state.provider != null, vm::refresh) }
             }
@@ -183,12 +183,13 @@ class MainActivity : ComponentActivity() {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column { Text(state.selectedGroup, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${state.visibleChannels.size} channels", color = TextMuted, fontSize = 13.sp) }
         Spacer(Modifier.weight(1f))
-        TvButton({ vm.setSort(when(state.sort){ChannelSort.MANUAL->ChannelSort.ALPHABETICAL;ChannelSort.ALPHABETICAL->ChannelSort.PROVIDER;ChannelSort.PROVIDER->ChannelSort.MANUAL}) }) { Icon(Icons.AutoMirrored.Filled.Sort,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(state.sort.name.lowercase().replaceFirstChar(Char::uppercase)) }
+        TvButton(vm::cycleTimelineZoom) { Icon(Icons.Default.ZoomOutMap,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("${state.timelineHours}h") }
+        Spacer(Modifier.width(8.dp)); TvButton({ vm.setSort(when(state.sort){ChannelSort.MANUAL->ChannelSort.ALPHABETICAL;ChannelSort.ALPHABETICAL->ChannelSort.PROVIDER;ChannelSort.PROVIDER->ChannelSort.MANUAL}) }) { Icon(Icons.AutoMirrored.Filled.Sort,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(state.sort.name.lowercase().replaceFirstChar(Char::uppercase)) }
         Spacer(Modifier.width(8.dp)); TvButton(vm::refresh) { Icon(Icons.Default.Refresh,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Update") }
     }
 }
 
-@Composable private fun GuideHeader(windowStart: Long, vm: MainViewModel) {
+@Composable private fun GuideHeader(windowStart: Long, hours: Int, vm: MainViewModel) {
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.width(270.dp), verticalAlignment = Alignment.CenterVertically) {
             TvButton({ vm.shiftTimeline(-24) }) { Icon(Icons.Default.KeyboardDoubleArrowLeft, null, Modifier.size(17.dp)) }
@@ -197,18 +198,19 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(2) }) { Icon(Icons.Default.ChevronRight, null, Modifier.size(17.dp)) }
             Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(24) }) { Icon(Icons.Default.KeyboardDoubleArrowRight, null, Modifier.size(17.dp)) }
         }
-        repeat(6) { index ->
+        repeat(hours * 2) { index ->
             val instant = windowStart + index * 1_800_000L
+            val isNow = System.currentTimeMillis() in instant until instant + 1_800_000L
             Column(Modifier.weight(1f).padding(start = 6.dp)) {
                 if (index == 0) Text(SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(instant)), color = Focus, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(time(instant), color = TextMuted, fontSize = 12.sp)
+                Text(if (isNow) "NOW  ${time(instant)}" else time(instant), color = if (isNow) Focus else TextMuted, fontSize = 12.sp, fontWeight = if (isNow) FontWeight.Bold else FontWeight.Normal)
             }
         }
     }
 }
 
-@Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, selected: Boolean, vm: MainViewModel) {
-    val windowEnd = windowStart + 3 * 3_600_000L
+@Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, hours: Int, selected: Boolean, vm: MainViewModel) {
+    val windowEnd = windowStart + hours * 3_600_000L
     val slices = GuideTimeline.slices(channel, programs, windowStart, windowEnd)
     Row(Modifier.fillMaxWidth().height(68.dp), verticalAlignment = Alignment.CenterVertically) {
         var channelFocused by remember { mutableStateOf(false) }
@@ -460,7 +462,11 @@ class MainActivity : ComponentActivity() {
 @Composable private fun StatusLine(label:String,value:String){Row(Modifier.fillMaxWidth().padding(vertical=5.dp)){Text(label,color=TextMuted);Spacer(Modifier.weight(1f));Text(value,fontWeight=FontWeight.Medium)}}
 
 @Composable private fun SetupScreen(existing: ProviderConfig?, onSave: (ProviderConfig)->Unit) {
-    var type by remember(existing) { mutableStateOf(existing?.type ?: ProviderType.M3U) }; var name by remember(existing) { mutableStateOf(existing?.name ?: "My TV") }; var playlist by remember(existing) { mutableStateOf(existing?.playlistUrl.orEmpty()) }; var server by remember(existing) { mutableStateOf(existing?.serverUrl.orEmpty()) }; var username by remember(existing) { mutableStateOf(existing?.username.orEmpty()) }; var password by remember(existing) { mutableStateOf(existing?.password.orEmpty()) }; var epg by remember(existing) { mutableStateOf(existing?.epgUrl.orEmpty()) }; var validation by remember { mutableStateOf<String?>(null) }
+    var type by remember(existing) { mutableStateOf(existing?.type ?: ProviderType.M3U) }; var name by remember(existing) { mutableStateOf(existing?.name ?: "My TV") }; var playlist by remember(existing) { mutableStateOf(existing?.playlistUrl.orEmpty()) }; var server by remember(existing) { mutableStateOf(existing?.serverUrl.orEmpty()) }; var username by remember(existing) { mutableStateOf(existing?.username.orEmpty()) }; var password by remember(existing) { mutableStateOf(existing?.password.orEmpty()) }; var epg by remember(existing) { mutableStateOf(existing?.epgUrl.orEmpty()) }; var userAgent by remember(existing) { mutableStateOf(existing?.userAgent.orEmpty()) }; var referer by remember(existing) { mutableStateOf(existing?.referer.orEmpty()) }; var validation by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }; playlist = uri.toString() }
+    }
     Row(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.width(420.dp).fillMaxHeight().background(Panel).padding(48.dp),verticalArrangement=Arrangement.Center) {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Focus),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayArrow,null,Modifier.size(42.dp))};Spacer(Modifier.height(22.dp));Text("StreamGuide",fontSize=34.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("Live TV, organized your way.",fontSize=19.sp,color=TextMuted);Spacer(Modifier.height(34.dp));FeatureLine("Fast, remote-first TV guide");FeatureLine("Favorites and durable ordering");FeatureLine("Automatic XMLTV updates");FeatureLine("Private and local-only")
@@ -468,9 +474,10 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal=70.dp,vertical=42.dp),verticalArrangement=Arrangement.Center) {
             Text("Add your playlist",fontSize=30.sp,fontWeight=FontWeight.SemiBold);Text("StreamGuide does not provide channels. Add your own provider.",color=TextMuted);Spacer(Modifier.height(24.dp));Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){TvButton({type=ProviderType.M3U},selected=type==ProviderType.M3U){Text("M3U / M3U8")};TvButton({type=ProviderType.XTREAM},selected=type==ProviderType.XTREAM){Text("Xtream Codes")}}
             Spacer(Modifier.height(18.dp));SetupField("Playlist name",name,{name=it})
-            if(type==ProviderType.M3U) SetupField("M3U playlist URL",playlist,{playlist=it}) else {SetupField("Server URL",server,{server=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Username",username,{username=it})};Box(Modifier.weight(1f)){SetupField("Password",password,{password=it},true)}}}
-            SetupField("XMLTV EPG URL (optional)",epg,{epg=it});validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=13.sp)};Spacer(Modifier.height(18.dp))
-            TvButton({val valid=if(type==ProviderType.M3U) playlist.startsWith("http") else server.startsWith("http")&&username.isNotBlank()&&password.isNotBlank();if(!valid)validation="Enter valid provider details" else onSave(ProviderConfig(type,name.ifBlank{"My TV"},playlist,server,username,password,epg))},selected=true,modifier=Modifier.width(220.dp)){Icon(Icons.Default.Add,null);Spacer(Modifier.width(8.dp));Text("Add and update")}
+            if(type==ProviderType.M3U) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f)){SetupField("M3U playlist URL or local file",playlist,{playlist=it})};Spacer(Modifier.width(8.dp));TvButton({filePicker.launch(arrayOf("application/x-mpegURL","audio/x-mpegurl","text/plain","*/*"))}){Icon(Icons.Default.FolderOpen,null);Spacer(Modifier.width(5.dp));Text("File")}} } else {SetupField("Server URL",server,{server=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Username",username,{username=it})};Box(Modifier.weight(1f)){SetupField("Password",password,{password=it},true)}}}
+            SetupField("XMLTV EPG URL (optional)",epg,{epg=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Custom user agent (optional)",userAgent,{userAgent=it})};Box(Modifier.weight(1f)){SetupField("HTTP referer (optional)",referer,{referer=it})}}
+            validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=13.sp)};Spacer(Modifier.height(12.dp))
+            TvButton({val valid=if(type==ProviderType.M3U) playlist.startsWith("http")||playlist.startsWith("content://") else server.startsWith("http")&&username.isNotBlank()&&password.isNotBlank();if(!valid)validation="Enter valid provider details" else onSave(ProviderConfig(type,name.ifBlank{"My TV"},playlist,server,username,password,epg,userAgent,referer))},selected=true,modifier=Modifier.width(220.dp)){Icon(Icons.Default.Add,null);Spacer(Modifier.width(8.dp));Text(if(existing==null)"Add and update" else "Save and update")}
         }
     }
 }
