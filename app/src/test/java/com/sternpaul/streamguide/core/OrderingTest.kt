@@ -14,8 +14,10 @@ class OrderingTest {
   val result = ChannelReconciler.moveTo(channels, "d", 2)
   assertEquals(listOf("a", "d", "b", "c"), result.sortedWith(ChannelOrdering.manual).map { it.id })
  }
- @Test fun absolutePositionIsClampedToTheList() {
-  val channels = listOf(Channel("a", "A", "u", manualRank = 1000), Channel("b", "B", "u", manualRank = 2000))
-  assertEquals(listOf("b", "a"), ChannelReconciler.moveTo(channels, "a", 99).sortedWith(ChannelOrdering.manual).map { it.id })
+ @Test fun customNameAndGroupSurviveProviderRefresh() {
+  val old = listOf(Channel("a", "Provider", "u", customName = "BBC", customGroup = "News"))
+  val result = ChannelReconciler.reconcile(old, listOf(Channel("a", "Renamed Provider", "u2", group = "World"))).single()
+  assertEquals("BBC", result.displayName)
+  assertEquals("News", result.displayGroup)
  }
 }

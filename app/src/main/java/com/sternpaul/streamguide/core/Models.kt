@@ -13,8 +13,13 @@ data class Channel(
     val hidden: Boolean = false,
     val locked: Boolean = false,
     val catchupSource: String = "",
-    val catchupDays: Int = 0
-)
+    val catchupDays: Int = 0,
+    val customName: String = "",
+    val customGroup: String = ""
+) {
+    val displayName: String get() = customName.ifBlank { name }
+    val displayGroup: String get() = customGroup.ifBlank { group }
+}
 
 data class Program(
     val channelId: String,

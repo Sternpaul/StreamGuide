@@ -13,7 +13,10 @@ A private, local-only live IPTV player for Fire TV, designed for the Fire TV Sti
 - Channel groups, favorites, search, current/next programmes
 - Persistent manual channel ordering that survives provider refreshes
 - Channel manager with filtering, hide/restore, single-step, ten-step, top/bottom, and exact-position movement
-- Full-screen Media3 playback, channel up/down, and aspect-ratio control
+- Full-screen Media3 playback, channel up/down, fit/zoom, audio cycling, subtitle toggle, catch-up seeking, previous channel, sleep timer, external player, PiP, diagnostics, and automatic retry
+- Persistent recent-channel history
+- Editable provider connection without clearing local organization
+- Custom channel names and custom groups that survive provider refreshes
 - Catch-up playback for M3U/Xtream playlists that expose `catchup-source` metadata
 - Two-to-four-channel Multiview with selectable audio
 - Parental PIN and persistent per-channel locks

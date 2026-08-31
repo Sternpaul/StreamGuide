@@ -11,7 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, MULTIVIEW, PLAYER, SETUP }
+enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, EDIT_PROVIDER, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
 
 data class UiState(
@@ -34,17 +34,18 @@ data class UiState(
     val hasParentalPin: Boolean = false,
     val pendingPinChannelId: String? = null,
     val timelineStart: Long = System.currentTimeMillis() / 1_800_000L * 1_800_000L,
-    val selectedProgram: Program? = null
+    val selectedProgram: Program? = null,
+    val recentChannelIds: List<String> = emptyList()
 ) {
-    val groups: List<String> get() = listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.group }.distinct().sorted()
+    val groups: List<String> get() = listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
     val visibleChannels: List<Channel> get() {
         val filtered = channels.filterNot { it.hidden }.filter {
             when {
                 favoritesOnly || selectedGroup == "Favorites" -> it.favorite
-                selectedGroup != "All channels" -> it.group == selectedGroup
+                selectedGroup != "All channels" -> it.displayGroup == selectedGroup
                 else -> true
             }
-        }.filter { query.isBlank() || it.name.contains(query, true) || programs.any { p -> (p.channelId == it.tvgId || p.channelId == it.id) && p.title.contains(query, true) } }
+        }.filter { query.isBlank() || it.displayName.contains(query, true) || programs.any { p -> (p.channelId == it.tvgId || p.channelId == it.id) && p.title.contains(query, true) } }
         return when (sort) {
             ChannelSort.MANUAL -> filtered.sortedWith(ChannelOrdering.manual)
             ChannelSort.ALPHABETICAL -> filtered.sortedWith(ChannelOrdering.alphabetical)
@@ -70,20 +71,26 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             screen = if (provider == null) AppScreen.SETUP else AppScreen.GUIDE,
             provider = provider, channels = channels, programs = programs,
             selectedChannelId = channels.firstOrNull()?.id,
-            epgHours = store.epgHours(), hasParentalPin = store.hasParentalPin(),
+            epgHours = store.epgHours(), hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, programs.size)
         )
     }
 
     fun navigate(screen: AppScreen) { state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "") }
-    fun selectGroup(group: String) { state = state.copy(selectedGroup = group, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.group == group }?.id) }
+    fun selectGroup(group: String) { state = state.copy(selectedGroup = group, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.displayGroup == group }?.id) }
     fun selectChannel(id: String) { state = state.copy(selectedChannelId = id) }
     fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program) }
     fun shiftTimeline(hours: Int) { state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null) }
     fun jumpTimelineToNow() { state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null) }
     fun play(id: String) {
         val channel = state.channels.firstOrNull { it.id == id } ?: return
-        state = if (channel.locked && state.hasParentalPin) state.copy(pendingPinChannelId = id) else state.copy(playingChannelId = id, playingUrl = channel.url, selectedChannelId = id, screen = AppScreen.PLAYER)
+        if (channel.locked && state.hasParentalPin) {
+            state = state.copy(pendingPinChannelId = id)
+        } else {
+            val recent = (listOf(id) + state.recentChannelIds.filter { it != id }).take(30)
+            store.saveRecentChannelIds(recent)
+            state = state.copy(playingChannelId = id, playingUrl = channel.url, selectedChannelId = id, screen = AppScreen.PLAYER, recentChannelIds = recent)
+        }
     }
     fun submitParentalPin(pin: String) {
         val id = state.pendingPinChannelId ?: return
@@ -109,6 +116,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         play(list[(current + delta).coerceIn(0, list.lastIndex)].id)
     }
     fun closePlayer() { state = state.copy(screen = AppScreen.GUIDE) }
+    fun playPreviousChannel() { state.recentChannelIds.getOrNull(1)?.let(::play) }
     fun addToMultiview(id: String) {
         if (state.channels.firstOrNull { it.id == id }?.locked == true) { state = state.copy(error = "Unlock this channel before adding it to Multiview"); return }
         val ids = (state.multiviewIds + id).distinct().take(4)
@@ -137,6 +145,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun moveChannel(id: String, delta: Int) = mutateChannels { ChannelReconciler.move(it, id, delta) }
     fun moveChannelTo(id: String, oneBasedPosition: Int) = mutateChannels { ChannelReconciler.moveTo(it, id, oneBasedPosition) }
     fun toggleHidden(id: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(hidden = !it.hidden) else it } }
+    fun customizeChannel(id: String, name: String, group: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(customName = name.trim(), customGroup = group.trim()) else it } }
     fun hideChannel(id: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(hidden = true) else it } }
     private fun mutateChannels(change: (List<Channel>) -> List<Channel>) {
         val changed = change(state.channels); state = state.copy(channels = changed); viewModelScope.launch(Dispatchers.IO) { store.saveChannels(changed) }

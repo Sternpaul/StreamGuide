@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -88,7 +89,8 @@ class MainActivity : ComponentActivity() {
     val state = vm.state
     Surface(Modifier.fillMaxSize(), color = Bg) {
         when (state.screen) {
-            AppScreen.SETUP -> SetupScreen(vm::saveProvider)
+            AppScreen.SETUP -> SetupScreen(null, vm::saveProvider)
+            AppScreen.EDIT_PROVIDER -> SetupScreen(state.provider, vm::saveProvider)
             AppScreen.PLAYER -> PlayerScreen(state, vm)
             else -> Column {
                 AppTopBar(state, vm)
@@ -168,7 +170,7 @@ class MainActivity : ComponentActivity() {
         Text(state.provider?.name ?: "PLAYLIST", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(state.groups) { group ->
-                val count = when(group) { "All channels" -> state.channels.count { !it.hidden }; "Favorites" -> state.channels.count { it.favorite && !it.hidden }; else -> state.channels.count { it.group == group && !it.hidden } }
+                val count = when(group) { "All channels" -> state.channels.count { !it.hidden }; "Favorites" -> state.channels.count { it.favorite && !it.hidden }; else -> state.channels.count { it.displayGroup == group && !it.hidden } }
                 TvButton({ vm.selectGroup(group) }, selected = state.selectedGroup == group, modifier = Modifier.fillMaxWidth()) {
                     Icon(if(group=="Favorites") Icons.Default.Star else Icons.Default.Folder, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
                 }
@@ -219,8 +221,8 @@ class MainActivity : ComponentActivity() {
         ) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(if (channelFocused || selected) Focus else Color.Transparent)); Spacer(Modifier.width(9.dp))
             Text((channel.providerOrder + 1).toString(), Modifier.width(32.dp), color = TextMuted, fontSize = 12.sp)
-            if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(36.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.name.take(1), fontWeight = FontWeight.Bold) }
-            Spacer(Modifier.width(9.dp)); Text(channel.name, Modifier.weight(1f), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(36.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.displayName.take(1), fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.width(9.dp)); Text(channel.displayName, Modifier.weight(1f), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (channel.favorite) Icon(Icons.Default.Star, null, tint = Warning, modifier = Modifier.size(14.dp))
             if (channel.locked) Icon(Icons.Default.Lock, null, tint = TextMuted, modifier = Modifier.size(14.dp))
         }
@@ -272,8 +274,8 @@ class MainActivity : ComponentActivity() {
     ) {
         Box(Modifier.width(3.dp).fillMaxHeight().background(borderColor)); Spacer(Modifier.width(10.dp))
         Text((channel.providerOrder + 1).toString(), Modifier.width(34.dp), color=TextMuted, fontSize=13.sp)
-        if(channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(38.dp).padding(3.dp)) else Box(Modifier.size(34.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment=Alignment.Center){Text(channel.name.take(1),fontWeight=FontWeight.Bold)}
-        Spacer(Modifier.width(10.dp)); Text(channel.name, Modifier.width(155.dp), fontWeight=FontWeight.Medium, maxLines=1, overflow=TextOverflow.Ellipsis)
+        if(channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(38.dp).padding(3.dp)) else Box(Modifier.size(34.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment=Alignment.Center){Text(channel.displayName.take(1),fontWeight=FontWeight.Bold)}
+        Spacer(Modifier.width(10.dp)); Text(channel.displayName, Modifier.width(155.dp), fontWeight=FontWeight.Medium, maxLines=1, overflow=TextOverflow.Ellipsis)
         if(channel.favorite) Icon(Icons.Default.Star,null,tint=Warning,modifier=Modifier.size(15.dp)); if(channel.locked) Icon(Icons.Default.Lock,null,tint=TextMuted,modifier=Modifier.size(15.dp)); Spacer(Modifier.width(8.dp))
         val now = System.currentTimeMillis()
         repeat(2) { index ->
@@ -303,7 +305,7 @@ class MainActivity : ComponentActivity() {
                 Text(program.title, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(10.dp)); Text("${SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(program.startEpochMs))}  ${time(program.startEpochMs)}–${time(program.endEpochMs)}", color = if (live) Focus else TextMuted, fontSize = 12.sp)
             }
-            Text(program.description.ifBlank { channel.name }, color = TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+            Text(program.description.ifBlank { channel.displayName }, color = TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
         }
         if (past && channel.catchupSource.isNotBlank() && channel.catchupDays > 0) {
             TvButton({ vm.playCatchup(channel, program) }, selected = true) { Icon(Icons.Default.Replay, null); Spacer(Modifier.width(6.dp)); Text("Play catch-up") }
@@ -317,7 +319,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun SelectedChannelBar(channel: Channel, program: Program?, previous: Program?, vm: MainViewModel) {
     Row(Modifier.fillMaxWidth().height(72.dp).padding(top=8.dp).clip(RoundedCornerShape(9.dp)).background(Panel2).padding(horizontal=16.dp), verticalAlignment=Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(program?.title ?: channel.name, fontWeight=FontWeight.SemiBold, maxLines=1); Text(program?.description?.ifBlank { channel.group } ?: channel.group, color=TextMuted, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=12.sp) }
+        Column(Modifier.weight(1f)) { Text(program?.title ?: channel.displayName, fontWeight=FontWeight.SemiBold, maxLines=1); Text(program?.description?.ifBlank { channel.displayGroup } ?: channel.displayGroup, color=TextMuted, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=12.sp) }
         TvButton({vm.toggleFavorite(channel.id)}) { Icon(if(channel.favorite) Icons.Default.Star else Icons.Default.StarBorder,null,tint=if(channel.favorite) Warning else TextPrimary); Spacer(Modifier.width(6.dp)); Text("Favorite") }
         Spacer(Modifier.width(6.dp)); TvButton({vm.moveChannel(channel.id,-1)}) { Icon(Icons.Default.KeyboardArrowUp,null); Text("Move") }
         Spacer(Modifier.width(6.dp)); TvButton({vm.moveChannel(channel.id,1)}) { Icon(Icons.Default.KeyboardArrowDown,null) }
@@ -362,7 +364,7 @@ class MainActivity : ComponentActivity() {
         }
         if (channels.size < 4) {
             Spacer(Modifier.height(10.dp)); Text("ADD CHANNEL", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { state.visibleChannels.filter { it.id !in state.multiviewIds }.take(6).forEach { channel -> TvButton({vm.addToMultiview(channel.id)}) { Icon(Icons.Default.Add,null,Modifier.size(16.dp));Spacer(Modifier.width(4.dp));Text(channel.name,maxLines=1,overflow=TextOverflow.Ellipsis) } } }
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { state.visibleChannels.filter { it.id !in state.multiviewIds }.take(6).forEach { channel -> TvButton({vm.addToMultiview(channel.id)}) { Icon(Icons.Default.Add,null,Modifier.size(16.dp));Spacer(Modifier.width(4.dp));Text(channel.displayName,maxLines=1,overflow=TextOverflow.Ellipsis) } } }
         }
     }
 }
@@ -375,7 +377,7 @@ class MainActivity : ComponentActivity() {
     DisposableEffect(player) { onDispose { player.release() } }
     Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.focusable().combinedClickable(onClick=onActivate,onLongClick=onRemove)) {
         AndroidView(factory={ PlayerView(it).apply { this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1) } },update={it.player=player},modifier=Modifier.fillMaxSize())
-        Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0xCC10151C)).padding(11.dp),verticalAlignment=Alignment.CenterVertically) { if(active) Icon(Icons.AutoMirrored.Filled.VolumeUp,null,tint=Focus,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp));Text(channel.name,Modifier.weight(1f),fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis);Text("Hold to remove",color=TextMuted,fontSize=10.sp) }
+        Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0xCC10151C)).padding(11.dp),verticalAlignment=Alignment.CenterVertically) { if(active) Icon(Icons.AutoMirrored.Filled.VolumeUp,null,tint=Focus,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp));Text(channel.displayName,Modifier.weight(1f),fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis);Text("Hold to remove",color=TextMuted,fontSize=10.sp) }
         if(focused || active) Box(Modifier.matchParentSize().border(if(focused) 3.dp else 2.dp, if(focused) Color.White else Focus, RoundedCornerShape(9.dp)))
     }
 }
@@ -383,8 +385,12 @@ class MainActivity : ComponentActivity() {
 @Composable private fun OrganizeScreen(state: UiState, vm: MainViewModel) {
     var filter by remember { mutableStateOf("") }
     var targetPosition by remember { mutableStateOf("") }
-    val ordered = state.channels.sortedWith(ChannelOrdering.manual).filter { filter.isBlank() || it.name.contains(filter, true) }
+    var editName by remember { mutableStateOf("") }
+    var editGroup by remember { mutableStateOf("") }
+    val ordered = state.channels.sortedWith(ChannelOrdering.manual).filter { filter.isBlank() || it.displayName.contains(filter, true) }
     val selectedId = state.selectedChannelId ?: ordered.firstOrNull()?.id
+    val selectedChannel = state.channels.firstOrNull { it.id == selectedId }
+    LaunchedEffect(selectedId) { editName = selectedChannel?.customName.orEmpty(); editGroup = selectedChannel?.customGroup.orEmpty() }
     val selectedIndex = state.channels.sortedWith(ChannelOrdering.manual).indexOfFirst { it.id == selectedId }
     Column(Modifier.fillMaxSize().padding(horizontal = 30.dp, vertical = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -402,6 +408,12 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.width(10.dp)); OutlinedTextField(targetPosition, { targetPosition = it.filter(Char::isDigit).take(5) }, Modifier.width(120.dp), placeholder = { Text("Position") }, singleLine = true)
             Spacer(Modifier.width(6.dp)); TvButton({ val target = targetPosition.toIntOrNull(); if (target != null) selectedId?.let { vm.moveChannelTo(it, target) } }, selected = true) { Text("Move") }
         }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Panel).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(editName, { editName = it.take(80) }, Modifier.weight(1f), label = { Text("Custom channel name") }, placeholder = { Text(selectedChannel?.name.orEmpty()) }, singleLine = true)
+            Spacer(Modifier.width(8.dp)); OutlinedTextField(editGroup, { editGroup = it.take(80) }, Modifier.weight(1f), label = { Text("Custom group") }, placeholder = { Text(selectedChannel?.group.orEmpty()) }, singleLine = true)
+            Spacer(Modifier.width(8.dp)); TvButton({ selectedId?.let { vm.customizeChannel(it, editName, editGroup) } }, selected = true) { Icon(Icons.Default.Save, null); Spacer(Modifier.width(5.dp)); Text("Apply") }
+        }
         Spacer(Modifier.height(10.dp))
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(ordered, key = { it.id }) { channel ->
@@ -410,8 +422,8 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(7.dp)).background(if (focused || selectedId == channel.id) Color(0xFF1C2D43) else Panel)
                     .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectChannel(channel.id) }.focusable().combinedClickable(onClick = { vm.selectChannel(channel.id) }).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(actualPosition.toString(), Modifier.width(52.dp), color = TextMuted)
-                    if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(34.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.name.take(1)) }
-                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(channel.name, color = if (channel.hidden) TextMuted else TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(channel.group, color = TextMuted, fontSize = 11.sp) }
+                    if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(34.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.displayName.take(1)) }
+                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(channel.displayName, color = if (channel.hidden) TextMuted else TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(channel.displayGroup, color = TextMuted, fontSize = 11.sp) }
                     TvButton({ vm.moveChannel(channel.id, -1) }) { Icon(Icons.Default.KeyboardArrowUp, null) }
                     Spacer(Modifier.width(5.dp)); TvButton({ vm.moveChannel(channel.id, 1) }) { Icon(Icons.Default.KeyboardArrowDown, null) }
                     Spacer(Modifier.width(5.dp)); TvButton({ vm.toggleHidden(channel.id) }, selected = !channel.hidden) { Icon(if (channel.hidden) Icons.Default.VisibilityOff else Icons.Default.Visibility, null); Spacer(Modifier.width(5.dp)); Text(if (channel.hidden) "Hidden" else "Visible") }
@@ -426,7 +438,7 @@ class MainActivity : ComponentActivity() {
     Column(Modifier.fillMaxSize().padding(horizontal=42.dp,vertical=24.dp)) {
         Text("Settings", fontSize=28.sp,fontWeight=FontWeight.SemiBold); Text("Playlist, guide and app preferences",color=TextMuted); Spacer(Modifier.height(22.dp))
         SettingsCard("PLAYLIST") {
-            SettingRow(Icons.AutoMirrored.Filled.PlaylistPlay, state.provider?.name ?: "No playlist", when(state.provider?.type){ProviderType.XTREAM->"Xtream Codes";ProviderType.M3U->"M3U / M3U8";else->""}) { }
+            SettingRow(Icons.AutoMirrored.Filled.PlaylistPlay, state.provider?.name ?: "No playlist", when(state.provider?.type){ProviderType.XTREAM->"Xtream Codes · edit connection";ProviderType.M3U->"M3U / M3U8 · edit connection";else->""}) { vm.navigate(AppScreen.EDIT_PROVIDER) }
             HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Tune,"Manage channels","Reorder, move to position, hide and restore") { vm.navigate(AppScreen.ORGANIZE) }
             HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Refresh,"Update playlist and EPG",state.status.message,vm::refresh)
         }
@@ -447,8 +459,8 @@ class MainActivity : ComponentActivity() {
 @Composable private fun SettingRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit){TvButton(onClick,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=1)}}}
 @Composable private fun StatusLine(label:String,value:String){Row(Modifier.fillMaxWidth().padding(vertical=5.dp)){Text(label,color=TextMuted);Spacer(Modifier.weight(1f));Text(value,fontWeight=FontWeight.Medium)}}
 
-@Composable private fun SetupScreen(onSave: (ProviderConfig)->Unit) {
-    var type by remember { mutableStateOf(ProviderType.M3U) }; var name by remember { mutableStateOf("My TV") }; var playlist by remember { mutableStateOf("") }; var server by remember { mutableStateOf("") }; var username by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var epg by remember { mutableStateOf("") }; var validation by remember { mutableStateOf<String?>(null) }
+@Composable private fun SetupScreen(existing: ProviderConfig?, onSave: (ProviderConfig)->Unit) {
+    var type by remember(existing) { mutableStateOf(existing?.type ?: ProviderType.M3U) }; var name by remember(existing) { mutableStateOf(existing?.name ?: "My TV") }; var playlist by remember(existing) { mutableStateOf(existing?.playlistUrl.orEmpty()) }; var server by remember(existing) { mutableStateOf(existing?.serverUrl.orEmpty()) }; var username by remember(existing) { mutableStateOf(existing?.username.orEmpty()) }; var password by remember(existing) { mutableStateOf(existing?.password.orEmpty()) }; var epg by remember(existing) { mutableStateOf(existing?.epgUrl.orEmpty()) }; var validation by remember { mutableStateOf<String?>(null) }
     Row(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.width(420.dp).fillMaxHeight().background(Panel).padding(48.dp),verticalArrangement=Arrangement.Center) {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Focus),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayArrow,null,Modifier.size(42.dp))};Spacer(Modifier.height(22.dp));Text("StreamGuide",fontSize=34.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("Live TV, organized your way.",fontSize=19.sp,color=TextMuted);Spacer(Modifier.height(34.dp));FeatureLine("Fast, remote-first TV guide");FeatureLine("Favorites and durable ordering");FeatureLine("Automatic XMLTV updates");FeatureLine("Private and local-only")
@@ -468,15 +480,73 @@ class MainActivity : ComponentActivity() {
 @Composable private fun PlayerScreen(state: UiState, vm: MainViewModel) {
     val channel=state.playingChannel ?: return
     val context=LocalContext.current
-    var controls by remember { mutableStateOf(true) }; var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     val streamUrl = state.playingUrl ?: channel.url
+    var controls by remember { mutableStateOf(true) }; var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var sleepMinutes by remember { mutableIntStateOf(0) }
+    var playbackInfo by remember { mutableStateOf("Connecting…") }
+    var retries by remember(streamUrl) { mutableIntStateOf(0) }
     val player=remember(streamUrl){ExoPlayer.Builder(context).build().apply{setMediaItem(MediaItem.fromUri(streamUrl));prepare();playWhenReady=true}}
-    DisposableEffect(player){onDispose{player.release()}}
+    DisposableEffect(player){
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) { playbackInfo = when (playbackState) { androidx.media3.common.Player.STATE_BUFFERING -> "Buffering"; androidx.media3.common.Player.STATE_READY -> player.videoFormat?.let { "${it.width}×${it.height} · ${it.sampleMimeType.orEmpty().substringAfterLast('/')}" } ?: "Playing"; androidx.media3.common.Player.STATE_ENDED -> "Ended"; else -> "Connecting…" } }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) { if (retries < 3) { retries++; player.prepare(); player.play() } else playbackInfo = "Playback failed: ${error.errorCodeName}" }
+        }
+        player.addListener(listener)
+        onDispose{player.removeListener(listener);player.release()}
+    }
+    LaunchedEffect(sleepMinutes) { if (sleepMinutes > 0) { kotlinx.coroutines.delay(sleepMinutes * 60_000L); vm.closePlayer() } }
     BackHandler{vm.closePlayer()}
     Box(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event -> if(event.nativeKeyEvent.action!=KeyEvent.ACTION_UP)return@onPreviewKeyEvent false;when(event.nativeKeyEvent.keyCode){KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_CHANNEL_UP->{vm.playAdjacent(-1);true};KeyEvent.KEYCODE_DPAD_DOWN,KeyEvent.KEYCODE_CHANNEL_DOWN->{vm.playAdjacent(1);true};KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER->{controls=!controls;true};else->false}}.focusable()) {
         AndroidView(factory={PlayerView(it).apply{this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1)}},update={it.player=player;it.resizeMode=resizeMode},modifier=Modifier.fillMaxSize())
-        AnimatedVisibility(controls,enter=fadeIn(),exit=fadeOut()) { Column(Modifier.fillMaxSize().background(Color(0x66000000)).padding(38.dp)) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)).background(Focus),contentAlignment=Alignment.Center){Text((channel.providerOrder+1).toString(),fontWeight=FontWeight.Bold)};Spacer(Modifier.width(14.dp));Column{Text(channel.name,fontSize=24.sp,fontWeight=FontWeight.SemiBold);Text(channel.group,color=TextMuted)}};Spacer(Modifier.weight(1f));val current=currentAndNext(channel,state.programs).firstOrNull();Text(current?.title?:"Live TV",fontSize=25.sp,fontWeight=FontWeight.SemiBold);Text(current?.description.orEmpty(),color=TextMuted,maxLines=2);Spacer(Modifier.height(16.dp));Row{TvButton({vm.closePlayer()}){Icon(Icons.AutoMirrored.Filled.List,null);Spacer(Modifier.width(7.dp));Text("Guide")};Spacer(Modifier.width(8.dp));TvButton({vm.toggleFavorite(channel.id)}){Icon(if(channel.favorite)Icons.Default.Star else Icons.Default.StarBorder,null,tint=if(channel.favorite)Warning else TextPrimary);Spacer(Modifier.width(7.dp));Text("Favorite")};Spacer(Modifier.width(8.dp));TvButton({resizeMode=if(resizeMode==AspectRatioFrameLayout.RESIZE_MODE_FIT)AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT}){Icon(Icons.Default.AspectRatio,null);Spacer(Modifier.width(7.dp));Text("Aspect")};Spacer(Modifier.weight(1f));Text("▲▼  Change channel    OK  Controls",color=TextMuted,modifier=Modifier.align(Alignment.CenterVertically))} } }
+        AnimatedVisibility(controls, enter = fadeIn(), exit = fadeOut()) {
+            Column(Modifier.fillMaxSize().background(Color(0x66000000)).padding(38.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)).background(Focus), contentAlignment = Alignment.Center) { Text((channel.providerOrder + 1).toString(), fontWeight = FontWeight.Bold) }
+                    Spacer(Modifier.width(14.dp)); Column { Text(channel.displayName, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${channel.displayGroup} · $playbackInfo", color = TextMuted) }
+                }
+                Spacer(Modifier.weight(1f))
+                val current = currentAndNext(channel, state.programs).firstOrNull()
+                Text(current?.title ?: "Live TV", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
+                Text(current?.description.orEmpty(), color = TextMuted, maxLines = 2)
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    TvButton(vm::closePlayer) { Icon(Icons.AutoMirrored.Filled.List, null); Spacer(Modifier.width(5.dp)); Text("Guide") }
+                    TvButton(vm::playPreviousChannel) { Icon(Icons.Default.SwapHoriz, null); Spacer(Modifier.width(5.dp)); Text("Previous") }
+                    TvButton({ player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) { Icon(Icons.Default.Replay10, null); Text("10") }
+                    TvButton({ player.seekTo(player.currentPosition + 30_000L) }) { Icon(Icons.Default.Forward30, null); Text("30") }
+                    TvButton({ cycleAudioTrack(player) }) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null); Spacer(Modifier.width(5.dp)); Text("Audio") }
+                    TvButton({ toggleSubtitles(player) }) { Icon(Icons.Default.Subtitles, null); Spacer(Modifier.width(5.dp)); Text("Subtitles") }
+                    TvButton({ resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT }) { Icon(Icons.Default.AspectRatio, null); Text("Aspect") }
+                }
+                Spacer(Modifier.height(7.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TvButton({ sleepMinutes = when (sleepMinutes) { 0 -> 15; 15 -> 30; 30 -> 60; else -> 0 } }, selected = sleepMinutes > 0) { Icon(Icons.Default.Bedtime, null); Spacer(Modifier.width(5.dp)); Text(if (sleepMinutes == 0) "Sleep" else "${sleepMinutes}m") }
+                    TvButton({ openExternalPlayer(context, streamUrl) }) { Icon(Icons.AutoMirrored.Filled.OpenInNew, null); Spacer(Modifier.width(5.dp)); Text("External") }
+                    if (android.os.Build.VERSION.SDK_INT >= 26) TvButton({ (context as? android.app.Activity)?.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()) }) { Icon(Icons.Default.PictureInPictureAlt, null); Spacer(Modifier.width(5.dp)); Text("PiP") }
+                    TvButton({ vm.toggleFavorite(channel.id) }) { Icon(if (channel.favorite) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (channel.favorite) Warning else TextPrimary); Text("Favorite") }
+                    Spacer(Modifier.weight(1f)); Text("▲▼ Channel · OK Controls · Auto-retry 3×", color = TextMuted, fontSize = 12.sp)
+                }
+            }
+        }
     }
+}
+
+private fun cycleAudioTrack(player: ExoPlayer) {
+    val group = player.currentTracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO && it.length > 1 } ?: return
+    val selected = (0 until group.length).firstOrNull { group.isTrackSelected(it) } ?: -1
+    val next = (selected + 1).mod(group.length)
+    val override = androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, next)
+    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setOverrideForType(override).build()
+}
+
+private fun toggleSubtitles(player: ExoPlayer) {
+    val disabled = androidx.media3.common.C.TRACK_TYPE_TEXT in player.trackSelectionParameters.disabledTrackTypes
+    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, !disabled).build()
+}
+
+private fun openExternalPlayer(context: android.content.Context, url: String) {
+    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).setDataAndType(android.net.Uri.parse(url), "video/*").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
 }
 
 @Composable

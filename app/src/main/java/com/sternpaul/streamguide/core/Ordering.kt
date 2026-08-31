@@ -2,7 +2,7 @@ package com.sternpaul.streamguide.core
 
 object ChannelOrdering {
     val manual = compareBy<Channel> { it.manualRank ?: Long.MAX_VALUE }.thenBy { it.providerOrder }.thenBy { it.name.lowercase() }
-    val alphabetical = compareBy<Channel> { it.name.lowercase() }
+    val alphabetical = compareBy<Channel> { it.displayName.lowercase() }
     val provider = compareBy<Channel> { it.providerOrder }
 }
 
@@ -16,7 +16,9 @@ object ChannelReconciler {
                 manualRank = saved.manualRank,
                 favorite = saved.favorite,
                 hidden = saved.hidden,
-                locked = saved.locked
+                locked = saved.locked,
+                customName = saved.customName,
+                customGroup = saved.customGroup
             ) else incoming.copy(manualRank = nextRank.also { nextRank += 1000L })
         }
     }
