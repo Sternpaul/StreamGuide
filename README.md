@@ -26,6 +26,16 @@ A private, local-only live IPTV player for Fire TV, designed for the Fire TV Sti
 
 StreamGuide provides no channels or media. Use only sources you are authorized to access.
 
+## Download and install on Fire TV
+
+Download the latest signed APK from [GitHub Releases](https://github.com/Sternpaul/StreamGuide/releases/latest). The permanent direct-download URL is:
+
+```text
+https://github.com/Sternpaul/StreamGuide/releases/latest/download/StreamGuide-firetv.apk
+```
+
+On Fire TV, install **Downloader by AFTVnews**, enable **Install unknown apps** for Downloader, enter the published StreamGuide Downloader code, and install the APK. Existing installations update in place because releases use the same signing key.
+
 ## Build
 
 ```bash
