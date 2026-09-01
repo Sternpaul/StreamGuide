@@ -17,10 +17,8 @@ class PlaylistRepository(private val store: AppStore) {
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
             onProgress("Connecting to ${provider.name}")
-            onProgress("Downloading live channel list")
-            val playlistText = download(provider, ProviderEndpoints.playlist(provider)).use { it.readLimitedText(50 * 1024 * 1024) }
-            onProgress("Parsing channel list")
-            val parsed = M3uParser.parse(playlistText)
+            onProgress("Streaming and parsing live channel list")
+            val parsed = download(provider, ProviderEndpoints.playlist(provider)).use(M3uParser::parse)
             require(parsed.isNotEmpty()) { "The provider returned no valid live channels. Check the server address and credentials." }
             onProgress("Found ${parsed.size} live channels")
             val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
@@ -71,11 +69,5 @@ class PlaylistRepository(private val store: AppStore) {
         val builder = Request.Builder().url(url)
         ProviderHeaders.forProvider(provider).forEach { (name, value) -> builder.header(name, value) }
         return builder.build()
-    }
-
-    private fun InputStream.readLimitedText(limit: Int): String {
-        val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192); var total = 0
-        while (true) { val count=read(buffer); if(count<0) break; total += count; require(total<=limit){"Playlist is too large"}; out.write(buffer,0,count) }
-        return out.toString(Charsets.UTF_8.name())
     }
 }
