@@ -423,7 +423,7 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 channels.chunked(2).forEach { rowChannels ->
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        rowChannels.forEach { channel -> MultiTile(channel, channel.id == activeId, { activeId = channel.id }, { vm.removeFromMultiview(channel.id) }, Modifier.weight(1f)) }
+                        rowChannels.forEach { channel -> MultiTile(channel, state.provider, channel.id == activeId, { activeId = channel.id }, { vm.removeFromMultiview(channel.id) }, Modifier.weight(1f)) }
                         if (rowChannels.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
@@ -436,10 +436,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun MultiTile(channel: Channel, active: Boolean, onActivate: () -> Unit, onRemove: () -> Unit, modifier: Modifier = Modifier) {
+@Composable private fun MultiTile(channel: Channel, provider: ProviderConfig?, active: Boolean, onActivate: () -> Unit, onRemove: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-    val player = remember(channel.url) { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
+    val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(MediaItem.fromUri(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
     LaunchedEffect(active) { player.volume = if(active) 1f else 0f }
     DisposableEffect(player) { onDispose { player.release() } }
     Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.focusable().combinedClickable(onClick=onActivate,onLongClick=onRemove)) {
@@ -730,11 +730,8 @@ private fun TvTextField(
     var playbackInfo by remember { mutableStateOf("Connecting…") }
     var isPlaying by remember { mutableStateOf(true) }
     var retries by remember(streamUrl) { mutableIntStateOf(0) }
-    val player = remember(streamUrl) {
-        ExoPlayer.Builder(context)
-            .setSeekBackIncrementMs(10_000L)
-            .setSeekForwardIncrementMs(30_000L)
-            .build()
+    val player = remember(streamUrl, state.provider) {
+        PlaybackPlayerFactory.create(context, state.provider)
             .apply { setMediaItem(MediaItem.fromUri(streamUrl)); prepare(); playWhenReady = true }
     }
     DisposableEffect(player) {
