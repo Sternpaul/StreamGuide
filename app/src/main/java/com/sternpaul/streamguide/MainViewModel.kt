@@ -75,6 +75,9 @@ data class UiState(
     val recentChannelIds: List<String> = emptyList(),
     val importLog: List<String> = emptyList(),
     val importFinished: Boolean = false,
+    val epgDiagnostics: EpgDiagnostics? = null,
+    val diagnosticsLoading: Boolean = false,
+    val diagnosticsError: String = "",
     val overlayMenu: OverlayMenu = OverlayMenu.NONE
 ) {
     private val visibleGroupCounts: Map<String, Int> by lazy(LazyThreadSafetyMode.NONE) {
@@ -123,19 +126,17 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     private val store = app.container.store
     private val repository = app.container.repository
     private var searchJob: Job? = null
+    private var diagnosticsRequestId: Long = 0
     var state by mutableStateOf(loadState())
         private set
 
     init {
-        viewModelScope.launch {
-            val count = withContext(Dispatchers.IO) { store.programCount() }
-            state = state.copy(status = state.status.copy(programCount = count))
-        }
+        refreshEpgDiagnostics()
         val action = RefreshPolicy.onAppStart(
             hasProvider = state.provider != null,
             playlistOnStart = state.updatePlaylistOnStart,
             epgOnStart = state.updateEpgOnStart,
-            epgIsStale = store.lastRefresh() == 0L || System.currentTimeMillis() - store.lastRefresh() > state.epgHours * 3_600_000L
+            epgIsStale = store.lastEpgRefresh() == 0L || System.currentTimeMillis() - store.lastEpgRefresh() > state.epgHours * 3_600_000L
         )
         when (action) {
             StartupRefreshAction.FULL_PLAYLIST -> refresh()
@@ -158,7 +159,32 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         )
     }
 
-    fun navigate(screen: AppScreen) { state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "", overlayMenu = NavigationPolicy.afterDestinationSelected()) }
+    fun navigate(screen: AppScreen) {
+        state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "", overlayMenu = NavigationPolicy.afterDestinationSelected())
+        if (screen == AppScreen.SETTINGS) refreshEpgDiagnostics()
+    }
+    fun refreshEpgDiagnostics() {
+        if (state.provider == null) return
+        val channels = state.channels
+        val requestId = ++diagnosticsRequestId
+        state = state.copy(diagnosticsLoading = true, diagnosticsError = "")
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { store.epgDiagnostics(channels) } }
+                .onSuccess { diagnostics ->
+                    if (requestId != diagnosticsRequestId) return@onSuccess
+                    state = state.copy(
+                        epgDiagnostics = diagnostics,
+                        diagnosticsLoading = false,
+                        diagnosticsError = "",
+                        status = state.status.copy(programCount = diagnostics.totalPrograms)
+                    )
+                }
+                .onFailure { error ->
+                    if (requestId != diagnosticsRequestId) return@onFailure
+                    state = state.copy(diagnosticsLoading = false, diagnosticsError = error.message ?: "Diagnostics unavailable")
+                }
+        }
+    }
     fun toggleAppMenu() { state = state.copy(overlayMenu = if (state.overlayMenu == OverlayMenu.APP) OverlayMenu.NONE else OverlayMenu.APP) }
     fun toggleChannelMenu() {
         if (state.screen != AppScreen.GUIDE) return
@@ -296,6 +322,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                     importLog = state.importLog + "Setup complete",
                     importFinished = true
                 )
+                refreshEpgDiagnostics()
             }.onFailure { error ->
                 val message = error.message ?: "The provider could not be loaded"
                 state = state.copy(loading = false, error = message, status = state.status.copy(running = false, message = message), importLog = state.importLog + "ERROR: $message", importFinished = false)
@@ -323,6 +350,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         status = status,
                         selectedChannelId = state.selectedChannelId ?: channels.firstOrNull()?.id
                     )
+                    refreshEpgDiagnostics()
                 }
                 .onFailure { error -> state = state.copy(loading = false, error = error.message ?: "Refresh failed", status = state.status.copy(running = false, message = error.message ?: "Refresh failed")) }
         }
@@ -341,6 +369,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         programsLoadedFor = emptySet(),
                         status = state.status.copy(running = false, lastSuccessEpochMs = store.lastRefresh(), message = "Updated $count guide programmes", programCount = count)
                     )
+                    refreshEpgDiagnostics()
                 }
                 .onFailure { error ->
                     val message = error.message ?: "TV guide update failed"

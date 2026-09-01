@@ -576,9 +576,19 @@ class MainActivity : ComponentActivity() {
             SettingsCard("STATUS") {
                 Column(Modifier.padding(16.dp)) {
                     StatusLine("Channels", state.channels.size.toString())
-                    StatusLine("Programmes", state.programs.size.toString())
+                    StatusLine("Programmes", state.status.programCount.toString())
                     StatusLine("EPG automatic update", if (state.epgAutoUpdate) "On · every ${state.epgHours}h" else "Off")
                     StatusLine("Last successful update", if (state.status.lastSuccessEpochMs > 0) SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(state.status.lastSuccessEpochMs)) else "Never")
+                }
+            }
+        }
+        item {
+            SettingsCard("EPG DIAGNOSTICS") {
+                when {
+                    state.diagnosticsLoading && state.epgDiagnostics == null -> Text("Calculating guide coverage…", color = TextMuted, modifier = Modifier.padding(16.dp))
+                    state.diagnosticsError.isNotBlank() && state.epgDiagnostics == null -> Text(state.diagnosticsError, color = Color(0xFFFF9AA5), modifier = Modifier.padding(16.dp))
+                    state.epgDiagnostics != null -> EpgDiagnosticsContent(state.epgDiagnostics)
+                    else -> Text("No guide diagnostics available yet.", color = TextMuted, modifier = Modifier.padding(16.dp))
                 }
             }
         }
@@ -593,6 +603,45 @@ class MainActivity : ComponentActivity() {
 @Composable private fun SettingRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit){TvButton(onClick,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis)}}}
 @Composable private fun SettingToggleRow(icon:ImageVector,title:String,subtitle:String,enabled:Boolean,onToggle:()->Unit){TvButton(onToggle,selected=enabled,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=2)};Text(if(enabled) "ON" else "OFF",color=if(enabled) Success else TextMuted,fontWeight=FontWeight.Bold)}}
 @Composable private fun StatusLine(label:String,value:String){Row(Modifier.fillMaxWidth().padding(vertical=5.dp)){Text(label,color=TextMuted);Spacer(Modifier.weight(1f));Text(value,fontWeight=FontWeight.Medium)}}
+@Composable private fun EpgDiagnosticsContent(diagnostics: EpgDiagnostics) {
+    Column(Modifier.padding(16.dp)) {
+        Text("Visible channels only. Counts come from the stored EPG, not the currently displayed guide rows.", color = TextMuted, fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+        StatusLine("Channels with guide", "${diagnostics.channelsWithEpg} / ${diagnostics.totalChannels} (${diagnostics.channelCoveragePercent}%)")
+        StatusLine("Mapped programmes", "${diagnostics.matchedPrograms} / ${diagnostics.totalPrograms} (${diagnostics.programMatchPercent}%)")
+        StatusLine("Recognized EPG channel IDs", "${diagnostics.matchedEpgChannelIds} / ${diagnostics.totalEpgChannelIds} (${diagnostics.epgIdMatchPercent}%)")
+        StatusLine("Currently airing", diagnostics.currentlyAiringPrograms.toString())
+        StatusLine("Starting in next 24 hours", diagnostics.upcomingPrograms24h.toString())
+        StatusLine("Guide data range", guideRange(diagnostics.guideStartEpochMs, diagnostics.guideEndEpochMs))
+        StatusLine("Channels missing TVG-ID", diagnostics.channelsWithoutTvgId.toString())
+        StatusLine("Duplicated TVG-IDs", diagnostics.duplicateTvgIds.toString())
+        StatusLine("Last EPG success", diagnosticTime(diagnostics.lastEpgSuccessEpochMs))
+        StatusLine("Last EPG duration", diagnosticDuration(diagnostics.lastEpgDurationMs))
+        StatusLine("Last full-update duration", diagnosticDuration(diagnostics.lastFullRefreshDurationMs))
+        if (diagnostics.unmatchedEpgIds.isNotEmpty()) {
+            HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF27303C))
+            Text("UNMATCHED EPG IDS", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(diagnostics.unmatchedEpgIds.joinToString(" · ") { "${it.id} (${it.count})" }, fontSize = 12.sp)
+        }
+        if (diagnostics.channelsWithoutEpg.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("CHANNELS WITHOUT GUIDE DATA", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(diagnostics.channelsWithoutEpg.joinToString(" · "), fontSize = 12.sp)
+        }
+        if (diagnostics.lastError.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text("LAST UPDATE WARNING", color = Color(0xFFFF9AA5), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(diagnostics.lastError, color = Color(0xFFFFC1C7), fontSize = 12.sp)
+        }
+    }
+}
+private fun diagnosticTime(epochMs: Long): String = if (epochMs <= 0) "Never" else SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(epochMs))
+private fun diagnosticDuration(durationMs: Long): String = when {
+    durationMs <= 0 -> "Not measured"
+    durationMs < 1_000 -> "${durationMs} ms"
+    else -> String.format(Locale.US, "%.1f s", durationMs / 1_000.0)
+}
+private fun guideRange(startMs: Long, endMs: Long): String = if (startMs <= 0 || endMs <= 0) "No data" else "${SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(Date(startMs))} – ${SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(Date(endMs))}"
 
 @Composable private fun ImportStatusScreen(state: UiState, vm: MainViewModel) {
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()

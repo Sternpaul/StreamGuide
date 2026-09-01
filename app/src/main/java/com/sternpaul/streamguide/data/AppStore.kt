@@ -26,7 +26,10 @@ class AppStore(private val context: Context) {
     fun saveProvider(provider: ProviderConfig) { secure.edit().putString("provider", providerToJson(provider).toString()).apply() }
     fun clearProvider() {
         secure.edit().remove("provider").apply()
-        prefs.edit().remove("group_order").remove("epg_sqlite_migrated").apply()
+        prefs.edit().remove("group_order").remove("epg_sqlite_migrated")
+            .remove("last_refresh").remove("last_error")
+            .remove("last_epg_refresh").remove("last_epg_duration_ms").remove("last_full_refresh_duration_ms")
+            .remove("recent_channels").remove("multiview_channels").apply()
         channelsFile.delete()
         programsFile.delete()
         epgDatabase.clear()
@@ -42,6 +45,26 @@ class AppStore(private val context: Context) {
     fun searchProgramChannelIds(query: String): Set<String> { ensureEpgMigrated(); return epgDatabase.searchChannelIds(query) }
     fun programChannelIds(): Set<String> { ensureEpgMigrated(); return epgDatabase.distinctChannelIds() }
     fun programCount(): Int { ensureEpgMigrated(); return epgDatabase.count() }
+    fun epgDiagnostics(channels: List<Channel>, nowEpochMs: Long = System.currentTimeMillis()): EpgDiagnostics {
+        ensureEpgMigrated()
+        val snapshot = epgDatabase.diagnostics(nowEpochMs)
+        return EpgDiagnosticsCalculator.calculate(
+            channels,
+            EpgDiagnosticInput(
+                countsByChannelId = snapshot.countsByChannelId,
+                totalPrograms = snapshot.totalPrograms,
+                currentlyAiringPrograms = snapshot.currentlyAiringPrograms,
+                upcomingPrograms24h = snapshot.upcomingPrograms24h,
+                guideStartEpochMs = snapshot.guideStartEpochMs,
+                guideEndEpochMs = snapshot.guideEndEpochMs,
+                lastEpgSuccessEpochMs = lastEpgRefresh(),
+                lastEpgDurationMs = lastEpgDurationMs(),
+                lastFullRefreshDurationMs = lastFullRefreshDurationMs(),
+                lastError = lastError()
+            ),
+            nowEpochMs
+        )
+    }
     fun savePrograms(programs: List<Program>): Int = savePrograms { emit -> programs.forEach(emit) }
     fun savePrograms(producer: ((Program) -> Unit) -> Unit): Int {
         val count = epgDatabase.replacePrograms(producer)
@@ -68,6 +91,13 @@ class AppStore(private val context: Context) {
     fun saveGroupOrder(groups: List<String>) { prefs.edit().putString("group_order", JSONArray(groups.distinct()).toString()).apply() }
     fun lastRefresh(): Long = prefs.getLong("last_refresh", 0L)
     fun setLastRefresh(value: Long) { prefs.edit().putLong("last_refresh", value).apply() }
+    fun lastEpgRefresh(): Long = prefs.getLong("last_epg_refresh", 0L)
+    fun lastEpgDurationMs(): Long = prefs.getLong("last_epg_duration_ms", 0L)
+    fun lastFullRefreshDurationMs(): Long = prefs.getLong("last_full_refresh_duration_ms", 0L)
+    fun recordEpgRefresh(successEpochMs: Long, durationMs: Long) {
+        prefs.edit().putLong("last_epg_refresh", successEpochMs).putLong("last_epg_duration_ms", durationMs).apply()
+    }
+    fun setLastFullRefreshDurationMs(durationMs: Long) { prefs.edit().putLong("last_full_refresh_duration_ms", durationMs).apply() }
     fun lastError(): String = prefs.getString("last_error", "").orEmpty()
     fun setLastError(value: String) { prefs.edit().putString("last_error", value).apply() }
     fun recentChannelIds(): List<String> = prefs.getString("recent_channels", "").orEmpty().split('|').filter { it.isNotBlank() }

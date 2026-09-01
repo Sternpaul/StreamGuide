@@ -1,11 +1,19 @@
 package com.sternpaul.streamguide.data
 
-import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.sternpaul.streamguide.core.Program
+
+data class EpgStorageSnapshot(
+    val countsByChannelId: Map<String, Int>,
+    val totalPrograms: Int,
+    val currentlyAiringPrograms: Int,
+    val upcomingPrograms24h: Int,
+    val guideStartEpochMs: Long,
+    val guideEndEpochMs: Long
+)
 
 class EpgDatabase(context: Context) : SQLiteOpenHelper(context, "streamguide_epg.db", null, 1) {
     override fun onCreate(db: SQLiteDatabase) {
@@ -75,6 +83,30 @@ class EpgDatabase(context: Context) : SQLiteOpenHelper(context, "streamguide_epg
 
     fun distinctChannelIds(): Set<String> = readableDatabase.rawQuery("SELECT DISTINCT channel_id FROM programs", null).use { cursor ->
         buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) }
+    }
+
+    fun diagnostics(nowEpochMs: Long): EpgStorageSnapshot {
+        val counts = readableDatabase.rawQuery(
+            "SELECT channel_id, COUNT(*) FROM programs GROUP BY channel_id",
+            null
+        ).use { cursor -> buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getInt(1)) } }
+        val end24h = nowEpochMs + 24L * 3_600_000L
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*), MIN(start_ms), MAX(end_ms), " +
+                "SUM(CASE WHEN start_ms <= ? AND end_ms > ? THEN 1 ELSE 0 END), " +
+                "SUM(CASE WHEN start_ms > ? AND start_ms <= ? THEN 1 ELSE 0 END) FROM programs",
+            arrayOf(nowEpochMs.toString(), nowEpochMs.toString(), nowEpochMs.toString(), end24h.toString())
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) EpgStorageSnapshot(counts, 0, 0, 0, 0, 0)
+            else EpgStorageSnapshot(
+                countsByChannelId = counts,
+                totalPrograms = cursor.getInt(0),
+                guideStartEpochMs = if (cursor.isNull(1)) 0 else cursor.getLong(1),
+                guideEndEpochMs = if (cursor.isNull(2)) 0 else cursor.getLong(2),
+                currentlyAiringPrograms = cursor.getInt(3),
+                upcomingPrograms24h = cursor.getInt(4)
+            )
+        }
     }
 
     fun clear() {

@@ -12,6 +12,7 @@ class PlaylistRepository(private val store: AppStore) {
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS).followRedirects(true).build()
 
     suspend fun refreshAll(onProgress: suspend (String) -> Unit = {}): RefreshStatus = withContext(Dispatchers.IO) {
+        val refreshStartedNs = System.nanoTime()
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
             onProgress("Connecting to ${provider.name}")
@@ -22,8 +23,13 @@ class PlaylistRepository(private val store: AppStore) {
             val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
             onProgress("Downloading TV guide")
             var epgWarning: String? = null
+            val epgStartedNs = System.nanoTime()
             val epgCount = runCatching {
-                refreshEpgInternal(provider) ?: store.programCount()
+                val refreshedCount = refreshEpgInternal(provider)
+                if (refreshedCount != null) {
+                    store.recordEpgRefresh(System.currentTimeMillis(), elapsedMs(epgStartedNs))
+                    refreshedCount
+                } else store.programCount()
             }.getOrElse { error ->
                 epgWarning = "TV guide update failed: ${error.message?.take(140) ?: "unknown error"}. Previous guide kept."
                 onProgress(epgWarning!!)
@@ -33,6 +39,7 @@ class PlaylistRepository(private val store: AppStore) {
             onProgress("Saving channels and guide")
             store.saveChannels(reconciled)
             store.setLastRefresh(System.currentTimeMillis())
+            store.setLastFullRefreshDurationMs(elapsedMs(refreshStartedNs))
             store.setLastError(epgWarning.orEmpty())
             RefreshStatus(
                 false,
@@ -42,6 +49,7 @@ class PlaylistRepository(private val store: AppStore) {
                 epgCount
             )
         } catch (e: Exception) {
+            store.setLastFullRefreshDurationMs(elapsedMs(refreshStartedNs))
             val message = e.message?.take(180) ?: "Refresh failed"
             store.setLastError(message)
             throw IllegalStateException(message, e)
@@ -50,8 +58,12 @@ class PlaylistRepository(private val store: AppStore) {
 
     suspend fun refreshEpg(): Int = withContext(Dispatchers.IO) {
         val provider = store.getProvider() ?: return@withContext 0
+        val startedNs = System.nanoTime()
         val count = refreshEpgInternal(provider) ?: return@withContext store.programCount()
-        store.setLastRefresh(System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        store.setLastRefresh(now)
+        store.recordEpgRefresh(now, elapsedMs(startedNs))
+        store.setLastError("")
         count
     }
 
@@ -75,6 +87,8 @@ class PlaylistRepository(private val store: AppStore) {
         if (!response.isSuccessful) { response.close(); error("Playlist HTTP ${response.code}") }
         return response.body?.byteStream() ?: error("Empty playlist response")
     }
+
+    private fun elapsedMs(startedNs: Long): Long = (System.nanoTime() - startedNs) / 1_000_000L
 
     private fun request(provider: ProviderConfig, url: String): Request {
         val builder = Request.Builder().url(url)
