@@ -23,7 +23,7 @@ class AppStore(private val context: Context) {
 
     fun getProvider(): ProviderConfig? = secure.getString("provider", null)?.let(::providerFromJson)
     fun saveProvider(provider: ProviderConfig) { secure.edit().putString("provider", providerToJson(provider).toString()).apply() }
-    fun clearProvider() { secure.edit().remove("provider").apply(); channelsFile.delete(); programsFile.delete() }
+    fun clearProvider() { secure.edit().remove("provider").apply(); prefs.edit().remove("group_order").apply(); channelsFile.delete(); programsFile.delete() }
 
     fun getChannels(): List<Channel> = readModels(channelsFile, ::channelFromJson)
     fun saveChannels(channels: List<Channel>) = JsonLinesStore.write(channelsFile, channels.asSequence()) { channelToJson(it).toString() }
@@ -33,12 +33,19 @@ class AppStore(private val context: Context) {
 
     fun epgHours(): Int = prefs.getInt("epg_hours", AppSettings.DEFAULT_EPG_HOURS).takeIf { it in AppSettings.allowedEpgHours } ?: AppSettings.DEFAULT_EPG_HOURS
     fun setEpgHours(hours: Int) { require(hours in AppSettings.allowedEpgHours); prefs.edit().putInt("epg_hours", hours).apply() }
+    fun timelineHours(): Int = prefs.getInt("timeline_hours", AppSettings.DEFAULT_TIMELINE_HOURS).takeIf { it in AppSettings.allowedTimelineHours } ?: AppSettings.DEFAULT_TIMELINE_HOURS
+    fun setTimelineHours(hours: Int) { require(hours in AppSettings.allowedTimelineHours); prefs.edit().putInt("timeline_hours", hours).apply() }
     fun epgAutoUpdate(): Boolean = prefs.getBoolean("epg_auto_update", true)
     fun setEpgAutoUpdate(enabled: Boolean) { prefs.edit().putBoolean("epg_auto_update", enabled).apply() }
     fun updateEpgOnStart(): Boolean = prefs.getBoolean("epg_update_on_start", true)
     fun setUpdateEpgOnStart(enabled: Boolean) { prefs.edit().putBoolean("epg_update_on_start", enabled).apply() }
     fun updatePlaylistOnStart(): Boolean = prefs.getBoolean("playlist_update_on_start", false)
     fun setUpdatePlaylistOnStart(enabled: Boolean) { prefs.edit().putBoolean("playlist_update_on_start", enabled).apply() }
+    fun groupOrder(): List<String> = runCatching {
+        val array = JSONArray(prefs.getString("group_order", "[]") ?: "[]")
+        (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
+    }.getOrDefault(emptyList())
+    fun saveGroupOrder(groups: List<String>) { prefs.edit().putString("group_order", JSONArray(groups.distinct()).toString()).apply() }
     fun lastRefresh(): Long = prefs.getLong("last_refresh", 0L)
     fun setLastRefresh(value: Long) { prefs.edit().putLong("last_refresh", value).apply() }
     fun lastError(): String = prefs.getString("last_error", "").orEmpty()

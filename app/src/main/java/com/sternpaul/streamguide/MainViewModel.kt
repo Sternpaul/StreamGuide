@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
 enum class OverlayMenu { NONE, APP, CHANNEL }
+enum class OptionsContext { CHANNEL, GROUP }
 
 object NavigationPolicy {
     fun afterDestinationSelected(): OverlayMenu = OverlayMenu.NONE
@@ -45,6 +46,9 @@ data class UiState(
     val programs: List<Program> = emptyList(),
     val programIndex: ProgramIndex = ProgramIndex(programs),
     val selectedGroup: String = "All channels",
+    val groupOrder: List<String> = emptyList(),
+    val focusedGroup: String? = null,
+    val optionsContext: OptionsContext = OptionsContext.CHANNEL,
     val selectedChannelId: String? = null,
     val playingChannelId: String? = null,
     val playingUrl: String? = null,
@@ -84,7 +88,8 @@ data class UiState(
         else -> visibleGroupCounts[group] ?: 0
     }
     val groups: List<String> by lazy(LazyThreadSafetyMode.NONE) {
-        listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
+        val discovered = channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
+        listOf("All channels", "Favorites") + GroupOrdering.apply(discovered, groupOrder)
     }
     val visibleChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
         val normalizedQuery = query.trim()
@@ -135,6 +140,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             screen = if (provider == null) AppScreen.SETUP else AppScreen.GUIDE,
             provider = provider, channels = channels, programs = programs,
             selectedChannelId = channels.firstOrNull()?.id,
+            groupOrder = store.groupOrder(),
+            timelineHours = store.timelineHours(),
             epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updateEpgOnStart = store.updateEpgOnStart(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, programs.size)
@@ -154,12 +161,23 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         return true
     }
     fun closeOverlayMenu() { state = state.copy(overlayMenu = OverlayMenu.NONE) }
-    fun selectGroup(group: String) { state = state.copy(selectedGroup = group, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.displayGroup == group }?.id) }
-    fun selectChannel(id: String) { state = state.copy(selectedChannelId = id) }
-    fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program) }
+    fun focusGroup(group: String) { state = state.copy(focusedGroup = group, optionsContext = OptionsContext.GROUP) }
+    fun selectGroup(group: String) { state = state.copy(selectedGroup = group, focusedGroup = group, optionsContext = OptionsContext.GROUP, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.displayGroup == group }?.id) }
+    fun selectChannel(id: String) { state = state.copy(selectedChannelId = id, optionsContext = OptionsContext.CHANNEL) }
+    fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program, optionsContext = OptionsContext.CHANNEL) }
+    fun moveFocusedGroupToTop() = updateFocusedGroupOrder { current, group -> GroupOrdering.moveToTop(current, group) }
+    fun moveFocusedGroup(delta: Int) = updateFocusedGroupOrder { current, group -> GroupOrdering.move(current, group, delta) }
+    private fun updateFocusedGroupOrder(change: (List<String>, String) -> List<String>) {
+        val group = state.focusedGroup ?: state.selectedGroup
+        if (group == "All channels" || group == "Favorites") return
+        val providerGroups = state.groups.filterNot { it == "All channels" || it == "Favorites" }
+        val order = change(providerGroups, group)
+        store.saveGroupOrder(order)
+        state = state.copy(groupOrder = order, overlayMenu = OverlayMenu.NONE)
+    }
     fun shiftTimeline(hours: Int) { state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null) }
     fun jumpTimelineToNow() { state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null) }
-    fun cycleTimelineZoom() { state = state.copy(timelineHours = when (state.timelineHours) { 2 -> 3; 3 -> 6; else -> 2 }) }
+    fun setTimelineHours(hours: Int) { store.setTimelineHours(hours); state = state.copy(timelineHours = hours) }
     fun play(id: String) {
         val channel = state.channels.firstOrNull { it.id == id } ?: return
         if (channel.locked && state.hasParentalPin) {

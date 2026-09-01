@@ -48,5 +48,7 @@ object ChannelReconciler {
 
 object AppSettings {
     const val DEFAULT_EPG_HOURS = 24
+    const val DEFAULT_TIMELINE_HOURS = 3
     val allowedEpgHours = setOf(4, 6, 12, 24, 48)
+    val allowedTimelineHours = setOf(2, 3, 6)
 }

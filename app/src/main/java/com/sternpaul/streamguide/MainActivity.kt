@@ -27,10 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
-import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -56,7 +53,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.sternpaul.streamguide.core.*
@@ -92,7 +88,21 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun StreamGuideRoot(vm: MainViewModel) {
     val state = vm.state
-    BackHandler(enabled = state.overlayMenu != OverlayMenu.NONE) { vm.closeOverlayMenu() }
+    val activity = LocalContext.current as? android.app.Activity
+    var exitArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(exitArmed) { if (exitArmed) { kotlinx.coroutines.delay(2_000); exitArmed = false } }
+    LaunchedEffect(state.screen) { exitArmed = false }
+    BackHandler(enabled = state.screen !in setOf(AppScreen.PLAYER, AppScreen.SETUP, AppScreen.EDIT_PROVIDER, AppScreen.IMPORT_STATUS)) {
+        if (state.overlayMenu != OverlayMenu.NONE) {
+            vm.closeOverlayMenu()
+        } else {
+            when (BackNavigationPolicy.action(state.screen, exitArmed)) {
+                BackAction.GO_TO_LIVE_TV -> vm.navigate(AppScreen.GUIDE)
+                BackAction.ARM_EXIT -> exitArmed = true
+                BackAction.EXIT -> activity?.finish()
+            }
+        }
+    }
     Surface(Modifier.fillMaxSize(), color = Bg) {
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
             event.nativeKeyEvent.action == KeyEvent.ACTION_UP &&
@@ -123,6 +133,7 @@ class MainActivity : ComponentActivity() {
             }
             state.pendingPinChannelId?.let { ParentalPinDialog(vm::submitParentalPin, vm::cancelParentalPin) }
             if (state.screen != AppScreen.IMPORT_STATUS) state.error?.let { ErrorBanner(it, vm::clearError) }
+            if (exitArmed) ExitConfirmationBanner()
         }
     }
 }
@@ -137,21 +148,15 @@ class MainActivity : ComponentActivity() {
         else -> "StreamGuide"
     }
     Row(
-        Modifier.fillMaxWidth().height(68.dp).background(Color(0xF20B0F14)).padding(horizontal = 22.dp),
+        Modifier.fillMaxWidth().height(60.dp).background(Color(0xF20B0F14)).padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         TvButton(vm::toggleAppMenu, selected = state.overlayMenu == OverlayMenu.APP) {
             Icon(Icons.Default.Menu, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Menu")
         }
-        Spacer(Modifier.width(18.dp)); Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(18.dp)); Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
-        if (state.loading) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Updating", color = TextMuted, fontSize = 13.sp); Spacer(Modifier.width(18.dp)) }
-        if (state.screen == AppScreen.GUIDE) {
-            TvButton(vm::toggleChannelMenu, selected = state.overlayMenu == OverlayMenu.CHANNEL) {
-                Icon(Icons.Default.MoreVert, null, Modifier.size(20.dp)); Spacer(Modifier.width(7.dp)); Text("Channel options")
-            }
-            Spacer(Modifier.width(18.dp))
-        }
+        if (state.loading) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Updating", color = TextMuted, fontSize = 14.sp); Spacer(Modifier.width(18.dp)) }
         Clock()
     }
 }
@@ -169,21 +174,30 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun ChannelActionsMenu(state: UiState, vm: MainViewModel) {
     val channel = state.selectedChannelId?.let { id -> state.channels.firstOrNull { it.id == id } }
+    val group = state.focusedGroup ?: state.selectedGroup
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(channel?.id) { if (channel != null) firstFocus.requestFocus() }
-    OverlayMenuPanel(Alignment.CenterEnd, "CHANNEL OPTIONS", Modifier.width(350.dp)) {
-        if (channel == null) {
+    val hasGroupAction = state.optionsContext == OptionsContext.GROUP && group !in setOf("All channels", "Favorites")
+    LaunchedEffect(state.optionsContext, channel?.id, group) { if (state.optionsContext == OptionsContext.CHANNEL && channel != null || hasGroupAction) firstFocus.requestFocus() }
+    OverlayMenuPanel(Alignment.CenterEnd, if (state.optionsContext == OptionsContext.GROUP) "CATEGORY OPTIONS" else "CHANNEL OPTIONS", Modifier.width(350.dp)) {
+        if (state.optionsContext == OptionsContext.GROUP) {
+            Text(group, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(10.dp))
+            if (hasGroupAction) {
+                MenuDestination("Move category to top", Icons.Default.VerticalAlignTop, modifier = Modifier.focusRequester(firstFocus)) { vm.moveFocusedGroupToTop() }
+                MenuDestination("Move category up", Icons.Default.KeyboardArrowUp) { vm.moveFocusedGroup(-1) }
+                MenuDestination("Move category down", Icons.Default.KeyboardArrowDown) { vm.moveFocusedGroup(1) }
+            } else {
+                Text("This built-in category cannot be reordered.", color = TextMuted, modifier = Modifier.padding(10.dp))
+            }
+        } else if (channel == null) {
             Text("Select a channel first", color = TextMuted, modifier = Modifier.padding(12.dp))
         } else {
             Text(channel.displayName, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(10.dp))
             MenuDestination(if (channel.favorite) "Remove favorite" else "Add favorite", if (channel.favorite) Icons.Default.Star else Icons.Default.StarBorder, modifier = Modifier.focusRequester(firstFocus)) { vm.toggleFavorite(channel.id); vm.closeOverlayMenu() }
+            MenuDestination("Move channel to top", Icons.Default.VerticalAlignTop) { vm.moveChannelTo(channel.id, 1); vm.closeOverlayMenu() }
             MenuDestination("Move up", Icons.Default.KeyboardArrowUp) { vm.moveChannel(channel.id, -1); vm.closeOverlayMenu() }
             MenuDestination("Move down", Icons.Default.KeyboardArrowDown) { vm.moveChannel(channel.id, 1); vm.closeOverlayMenu() }
             MenuDestination(if (channel.locked) "Unlock channel" else "Lock channel", if (channel.locked) Icons.Default.LockOpen else Icons.Default.Lock) { vm.toggleLock(channel.id); vm.closeOverlayMenu() }
             MenuDestination("Add to Multiview", Icons.Default.GridView) { vm.addToMultiview(channel.id) }
-            HorizontalDivider(color = Color(0xFF27303C), modifier = Modifier.padding(vertical = 6.dp))
-            MenuDestination("Guide width: ${state.timelineHours} hours", Icons.Default.ZoomOutMap) { vm.cycleTimelineZoom(); vm.closeOverlayMenu() }
-            MenuDestination("Update playlist and EPG", Icons.Default.Refresh) { vm.closeOverlayMenu(); vm.refresh() }
         }
     }
 }
@@ -207,20 +221,17 @@ class MainActivity : ComponentActivity() {
 @Composable private fun Clock() {
     var now by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(30_000); now = Date() } }
-    Column(horizontalAlignment = Alignment.End) {
-        Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-        Text(SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(now), color = TextMuted, fontSize = 12.sp)
-    }
+    Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
 }
 
 @Composable private fun GuideScreen(state: UiState, vm: MainViewModel) {
-    Row(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 14.dp)) {
+    Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp)) {
         GroupRail(state, vm)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             GuideToolbar(state)
             Spacer(Modifier.height(10.dp))
-            GuideHeader(state.timelineStart, state.timelineHours, vm)
+            GuideHeader(state.timelineStart, state.timelineHours)
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 items(state.visibleChannels, key = { it.id }) { channel ->
                     TimelineChannelRow(channel, state.programsFor(channel), state.timelineStart, state.timelineHours, channel.id == state.selectedChannelId, vm)
@@ -240,12 +251,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun GroupRail(state: UiState, vm: MainViewModel) {
-    Column(Modifier.width(205.dp).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(Panel).padding(10.dp)) {
+    Column(Modifier.width(225.dp).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(Panel).padding(10.dp)) {
         Text(state.provider?.name ?: "PLAYLIST", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(state.groups) { group ->
                 val count = state.channelCountForGroup(group)
-                TvButton({ vm.selectGroup(group) }, selected = state.selectedGroup == group, modifier = Modifier.fillMaxWidth()) {
+                TvButton({ vm.selectGroup(group) }, selected = state.selectedGroup == group, modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) vm.focusGroup(group) }) {
                     Icon(if(group=="Favorites") Icons.Default.Star else Icons.Default.Folder, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
                 }
             }
@@ -254,29 +265,16 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun GuideToolbar(state: UiState) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column { Text(state.selectedGroup, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${state.visibleChannels.size} channels", color = TextMuted, fontSize = 13.sp) }
-        Spacer(Modifier.weight(1f))
-        Text("Press the remote Options button for channel actions", color = TextMuted, fontSize = 12.sp)
-    }
+    Column { Text(state.selectedGroup, fontSize = 27.sp, fontWeight = FontWeight.SemiBold); Text("${state.visibleChannels.size} channels", color = TextMuted, fontSize = 14.sp) }
 }
 
-@Composable private fun GuideHeader(windowStart: Long, hours: Int, vm: MainViewModel) {
-    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.width(270.dp), verticalAlignment = Alignment.CenterVertically) {
-            TvButton({ vm.shiftTimeline(-24) }) { Icon(Icons.Default.KeyboardDoubleArrowLeft, null, Modifier.size(17.dp)) }
-            Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(-2) }) { Icon(Icons.Default.ChevronLeft, null, Modifier.size(17.dp)) }
-            Spacer(Modifier.width(4.dp)); TvButton(vm::jumpTimelineToNow, selected = true) { Text("Now", fontSize = 12.sp) }
-            Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(2) }) { Icon(Icons.Default.ChevronRight, null, Modifier.size(17.dp)) }
-            Spacer(Modifier.width(4.dp)); TvButton({ vm.shiftTimeline(24) }) { Icon(Icons.Default.KeyboardDoubleArrowRight, null, Modifier.size(17.dp)) }
-        }
+@Composable private fun GuideHeader(windowStart: Long, hours: Int) {
+    Row(Modifier.fillMaxWidth().height(42.dp), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.width(300.dp))
         repeat(hours * 2) { index ->
             val instant = windowStart + index * 1_800_000L
             val isNow = System.currentTimeMillis() in instant until instant + 1_800_000L
-            Column(Modifier.weight(1f).padding(start = 6.dp)) {
-                if (index == 0) Text(SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(instant)), color = Focus, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(if (isNow) "NOW  ${time(instant)}" else time(instant), color = if (isNow) Focus else TextMuted, fontSize = 12.sp, fontWeight = if (isNow) FontWeight.Bold else FontWeight.Normal)
-            }
+            Text(if (isNow) "NOW  ${time(instant)}" else time(instant), modifier = Modifier.weight(1f).padding(start = 7.dp), color = if (isNow) Focus else TextMuted, fontSize = 13.sp, fontWeight = if (isNow) FontWeight.Bold else FontWeight.Normal)
         }
     }
 }
@@ -284,10 +282,10 @@ class MainActivity : ComponentActivity() {
 @Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, hours: Int, selected: Boolean, vm: MainViewModel) {
     val windowEnd = windowStart + hours * 3_600_000L
     val slices = GuideTimeline.slices(channel, programs, windowStart, windowEnd)
-    Row(Modifier.fillMaxWidth().height(68.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(74.dp), verticalAlignment = Alignment.CenterVertically) {
         var channelFocused by remember { mutableStateOf(false) }
         Row(
-            Modifier.width(270.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+            Modifier.width(300.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
                 .background(if (channelFocused || selected) Color(0xFF1C2D43) else Panel)
                 .onFocusChanged { channelFocused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, null) }
                 .focusable().combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
@@ -508,6 +506,20 @@ class MainActivity : ComponentActivity() {
             Text("Use Up/Down to choose a setting, then press Select to change it.", color = TextMuted, fontSize = 13.sp)
         }
         item {
+            SettingsCard("GUIDE DISPLAY") {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Visible guide width", fontWeight = FontWeight.Medium)
+                    Text("Choose how many hours are shown across the Live TV guide.", color = TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AppSettings.allowedTimelineHours.sorted().forEach { hours ->
+                            TvButton({ vm.setTimelineHours(hours) }, selected = state.timelineHours == hours) { Text("${hours} hours") }
+                        }
+                    }
+                }
+            }
+        }
+        item {
             SettingsCard("TV GUIDE UPDATES") {
                 SettingToggleRow(
                     Icons.Default.Update,
@@ -710,75 +722,85 @@ private fun TvTextField(
 @Composable private fun FeatureLine(text:String){Row(Modifier.padding(vertical=7.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.CheckCircle,null,tint=Success,modifier=Modifier.size(18.dp));Spacer(Modifier.width(10.dp));Text(text,color=TextMuted)}}
 
 @Composable private fun PlayerScreen(state: UiState, vm: MainViewModel) {
-    val channel=state.playingChannel ?: return
-    val context=LocalContext.current
+    val channel = state.playingChannel ?: return
+    val context = LocalContext.current
     val streamUrl = state.playingUrl ?: channel.url
-    var controls by remember { mutableStateOf(true) }; var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
-    var sleepMinutes by remember { mutableIntStateOf(0) }
+    val playerFocus = remember { FocusRequester() }
+    var overlayVisible by remember { mutableStateOf(true) }
     var playbackInfo by remember { mutableStateOf("Connecting…") }
+    var isPlaying by remember { mutableStateOf(true) }
     var retries by remember(streamUrl) { mutableIntStateOf(0) }
-    val player=remember(streamUrl){ExoPlayer.Builder(context).build().apply{setMediaItem(MediaItem.fromUri(streamUrl));prepare();playWhenReady=true}}
-    DisposableEffect(player){
+    val player = remember(streamUrl) {
+        ExoPlayer.Builder(context)
+            .setSeekBackIncrementMs(10_000L)
+            .setSeekForwardIncrementMs(30_000L)
+            .build()
+            .apply { setMediaItem(MediaItem.fromUri(streamUrl)); prepare(); playWhenReady = true }
+    }
+    DisposableEffect(player) {
         val listener = object : androidx.media3.common.Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) { playbackInfo = when (playbackState) { androidx.media3.common.Player.STATE_BUFFERING -> "Buffering"; androidx.media3.common.Player.STATE_READY -> player.videoFormat?.let { "${it.width}×${it.height} · ${it.sampleMimeType.orEmpty().substringAfterLast('/')}" } ?: "Playing"; androidx.media3.common.Player.STATE_ENDED -> "Ended"; else -> "Connecting…" } }
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) { if (retries < 3) { retries++; player.prepare(); player.play() } else playbackInfo = "Playback failed: ${error.errorCodeName}" }
+            override fun onIsPlayingChanged(value: Boolean) { isPlaying = value; if (player.playbackState == androidx.media3.common.Player.STATE_READY) playbackInfo = if (value) "Playing" else "Paused" }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                playbackInfo = when (playbackState) {
+                    androidx.media3.common.Player.STATE_BUFFERING -> "Buffering"
+                    androidx.media3.common.Player.STATE_READY -> if (player.isPlaying) "Playing" else "Paused"
+                    androidx.media3.common.Player.STATE_ENDED -> "Ended"
+                    else -> "Connecting…"
+                }
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                if (retries < 3) { retries++; player.prepare(); player.play() }
+                else playbackInfo = "Playback failed: ${error.errorCodeName}"
+            }
         }
         player.addListener(listener)
-        onDispose{player.removeListener(listener);player.release()}
+        onDispose { player.removeListener(listener); player.release() }
     }
-    LaunchedEffect(sleepMinutes) { if (sleepMinutes > 0) { kotlinx.coroutines.delay(sleepMinutes * 60_000L); vm.closePlayer() } }
-    BackHandler{vm.closePlayer()}
-    Box(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event -> if(event.nativeKeyEvent.action!=KeyEvent.ACTION_UP)return@onPreviewKeyEvent false;when(event.nativeKeyEvent.keyCode){KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_CHANNEL_UP->{vm.playAdjacent(-1);true};KeyEvent.KEYCODE_DPAD_DOWN,KeyEvent.KEYCODE_CHANNEL_DOWN->{vm.playAdjacent(1);true};KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER->{controls=!controls;true};else->false}}.focusable()) {
-        AndroidView(factory={PlayerView(it).apply{this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1)}},update={it.player=player;it.resizeMode=resizeMode},modifier=Modifier.fillMaxSize())
-        AnimatedVisibility(controls, enter = fadeIn(), exit = fadeOut()) {
-            Column(Modifier.fillMaxSize().background(Color(0x66000000)).padding(38.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)).background(Focus), contentAlignment = Alignment.Center) { Text((channel.providerOrder + 1).toString(), fontWeight = FontWeight.Bold) }
-                    Spacer(Modifier.width(14.dp)); Column { Text(channel.displayName, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${channel.displayGroup} · $playbackInfo", color = TextMuted) }
+    LaunchedEffect(Unit) { playerFocus.requestFocus() }
+    LaunchedEffect(overlayVisible, isPlaying) { if (overlayVisible && isPlaying) { kotlinx.coroutines.delay(4_000); overlayVisible = false } }
+    BackHandler { vm.closePlayer() }
+    Box(
+        Modifier.fillMaxSize().background(Color.Black)
+            .focusRequester(playerFocus)
+            .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action != KeyEvent.ACTION_UP) return@onPreviewKeyEvent false
+                when (PlayerRemotePolicy.action(event.nativeKeyEvent.keyCode)) {
+                    PlayerRemoteAction.PREVIOUS_CHANNEL -> vm.playAdjacent(-1)
+                    PlayerRemoteAction.NEXT_CHANNEL -> vm.playAdjacent(1)
+                    PlayerRemoteAction.SEEK_BACK -> { player.seekBack(); overlayVisible = true }
+                    PlayerRemoteAction.SEEK_FORWARD -> { player.seekForward(); overlayVisible = true }
+                    PlayerRemoteAction.PLAY_PAUSE -> { if (player.isPlaying) player.pause() else player.play(); overlayVisible = true }
+                    PlayerRemoteAction.PLAY -> { player.play(); overlayVisible = true }
+                    PlayerRemoteAction.PAUSE -> { player.pause(); overlayVisible = true }
+                    PlayerRemoteAction.TOGGLE_OVERLAY -> overlayVisible = !overlayVisible
+                    PlayerRemoteAction.NONE -> return@onPreviewKeyEvent false
                 }
-                Spacer(Modifier.weight(1f))
+                true
+            }
+            .focusable()
+    ) {
+        AndroidView(
+            factory = { PlayerView(it).apply { this.player = player; useController = false; isFocusable = false; layoutParams = ViewGroup.LayoutParams(-1, -1) } },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize()
+        )
+        AnimatedVisibility(overlayVisible || !isPlaying, enter = fadeIn(), exit = fadeOut()) {
+            Box(Modifier.fillMaxSize().background(Color(0x55000000)).padding(42.dp)) {
+                Row(Modifier.align(Alignment.TopStart), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp)).background(Focus), contentAlignment = Alignment.Center) { Text((channel.providerOrder + 1).toString(), fontWeight = FontWeight.Bold, fontSize = 18.sp) }
+                    Spacer(Modifier.width(15.dp)); Column { Text(channel.displayName, fontSize = 27.sp, fontWeight = FontWeight.SemiBold); Text("${channel.displayGroup} · $playbackInfo", color = TextMuted, fontSize = 14.sp) }
+                }
+                if (!isPlaying) Icon(Icons.Default.PauseCircle, null, Modifier.align(Alignment.Center).size(76.dp), tint = Color.White)
                 val current = currentAndNext(channel, state.programsFor(channel)).firstOrNull()
-                Text(current?.title ?: "Live TV", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
-                Text(current?.description.orEmpty(), color = TextMuted, maxLines = 2)
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    TvButton(vm::closePlayer) { Icon(Icons.AutoMirrored.Filled.List, null); Spacer(Modifier.width(5.dp)); Text("Guide") }
-                    TvButton(vm::playPreviousChannel) { Icon(Icons.Default.SwapHoriz, null); Spacer(Modifier.width(5.dp)); Text("Previous") }
-                    TvButton({ player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) { Icon(Icons.Default.Replay10, null); Text("10") }
-                    TvButton({ player.seekTo(player.currentPosition + 30_000L) }) { Icon(Icons.Default.Forward30, null); Text("30") }
-                    TvButton({ cycleAudioTrack(player) }) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null); Spacer(Modifier.width(5.dp)); Text("Audio") }
-                    TvButton({ toggleSubtitles(player) }) { Icon(Icons.Default.Subtitles, null); Spacer(Modifier.width(5.dp)); Text("Subtitles") }
-                    TvButton({ resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT }) { Icon(Icons.Default.AspectRatio, null); Text("Aspect") }
-                }
-                Spacer(Modifier.height(7.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TvButton({ sleepMinutes = when (sleepMinutes) { 0 -> 15; 15 -> 30; 30 -> 60; else -> 0 } }, selected = sleepMinutes > 0) { Icon(Icons.Default.Bedtime, null); Spacer(Modifier.width(5.dp)); Text(if (sleepMinutes == 0) "Sleep" else "${sleepMinutes}m") }
-                    TvButton({ openExternalPlayer(context, streamUrl) }) { Icon(Icons.AutoMirrored.Filled.OpenInNew, null); Spacer(Modifier.width(5.dp)); Text("External") }
-                    if (android.os.Build.VERSION.SDK_INT >= 26) TvButton({ (context as? android.app.Activity)?.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()) }) { Icon(Icons.Default.PictureInPictureAlt, null); Spacer(Modifier.width(5.dp)); Text("PiP") }
-                    TvButton({ vm.toggleFavorite(channel.id) }) { Icon(if (channel.favorite) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (channel.favorite) Warning else TextPrimary); Text("Favorite") }
-                    Spacer(Modifier.weight(1f)); Text("▲▼ Channel · OK Controls · Auto-retry 3×", color = TextMuted, fontSize = 12.sp)
+                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
+                    Text(current?.title ?: "Live TV", fontSize = 27.sp, fontWeight = FontWeight.SemiBold)
+                    if (!current?.description.isNullOrBlank()) Text(current?.description.orEmpty(), color = TextMuted, maxLines = 2, fontSize = 14.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Text("← 10 seconds    30 seconds →     ▲▼ Channel     Play/Pause button", color = TextMuted, fontSize = 13.sp)
                 }
             }
         }
     }
-}
-
-private fun cycleAudioTrack(player: ExoPlayer) {
-    val group = player.currentTracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO && it.length > 1 } ?: return
-    val selected = (0 until group.length).firstOrNull { group.isTrackSelected(it) } ?: -1
-    val next = (selected + 1).mod(group.length)
-    val override = androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, next)
-    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setOverrideForType(override).build()
-}
-
-private fun toggleSubtitles(player: ExoPlayer) {
-    val disabled = androidx.media3.common.C.TRACK_TYPE_TEXT in player.trackSelectionParameters.disabledTrackTypes
-    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, !disabled).build()
-}
-
-private fun openExternalPlayer(context: android.content.Context, url: String) {
-    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).setDataAndType(android.net.Uri.parse(url), "video/*").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { context.startActivity(intent) }
 }
 
 @Composable
@@ -808,6 +830,7 @@ private fun TvButton(
 }
 @Composable private fun EmptyGuide(hasProvider:Boolean,onRefresh:()->Unit){Column(Modifier.fillMaxWidth().padding(70.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Default.LiveTv,null,Modifier.size(50.dp),tint=TextMuted);Spacer(Modifier.height(15.dp));Text(if(hasProvider)"No channels loaded" else "Add a playlist",fontSize=21.sp);Text("Update your playlist to populate the guide",color=TextMuted);Spacer(Modifier.height(16.dp));TvButton(onRefresh,selected=true){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(7.dp));Text("Update now")}}}
 @Composable private fun ParentalPinDialog(onSubmit:(String)->Unit,onCancel:()->Unit){var pin by remember{mutableStateOf("")};AlertDialog(onDismissRequest=onCancel,icon={Icon(Icons.Default.Lock,null)},title={Text("Parental control")},text={Column{Text("Enter the PIN to watch this channel.",color=TextMuted);Spacer(Modifier.height(12.dp));TvTextField(pin,{pin=it.filter(Char::isDigit).take(12)},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),placeholder={Text("PIN")})}},confirmButton={TvButton({onSubmit(pin)},selected=true){Text("Unlock")}},dismissButton={TvButton(onCancel){Text("Cancel")}})}
+@Composable private fun ExitConfirmationBanner(){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.BottomCenter){Surface(Modifier.padding(24.dp),shape=RoundedCornerShape(8.dp),color=Panel2,border=BorderStroke(1.dp,Focus)){Text("Press Back again to exit",modifier=Modifier.padding(horizontal=18.dp,vertical=12.dp),fontWeight=FontWeight.SemiBold)}}}
 @Composable private fun ErrorBanner(message:String,onDismiss:()->Unit){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.BottomCenter){Surface(Modifier.padding(24.dp).combinedClickable(onClick=onDismiss),shape=RoundedCornerShape(8.dp),color=Color(0xFF632A32),border=BorderStroke(1.dp,Color(0xFFFF7785))){Row(Modifier.padding(15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Error,null);Spacer(Modifier.width(10.dp));Text(message);Spacer(Modifier.width(18.dp));Text("Dismiss",fontWeight=FontWeight.Bold)}}}}
 private fun currentAndNext(channel:Channel,programs:List<Program>):List<Program>{val now=System.currentTimeMillis();val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs>now}.sortedBy{it.startEpochMs}.take(2).toList()}
 private fun lastCatchup(channel:Channel,programs:List<Program>):Program?{if(channel.catchupDays<=0)return null;val now=System.currentTimeMillis();val cutoff=now-channel.catchupDays*86_400_000L;val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs in cutoff..now}.maxByOrNull{it.endEpochMs}}
