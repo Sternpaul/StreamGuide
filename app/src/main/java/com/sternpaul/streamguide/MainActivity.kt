@@ -58,6 +58,7 @@ import coil.compose.AsyncImage
 import com.sternpaul.streamguide.core.*
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.launch
 
 private val Bg = Color(0xFF080B0F)
 private val Panel = Color(0xFF10151C)
@@ -728,33 +729,88 @@ private fun TvTextField(
     val playerFocus = remember { FocusRequester() }
     var overlayVisible by remember { mutableStateOf(true) }
     var playbackInfo by remember { mutableStateOf("Connecting…") }
-    var isPlaying by remember { mutableStateOf(true) }
+    var playbackDiagnostic by remember(streamUrl) { mutableStateOf("") }
+    var playbackFailed by remember(streamUrl) { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(false) }
     var retries by remember(streamUrl) { mutableIntStateOf(0) }
+    var retryJob by remember(streamUrl) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val scope = rememberCoroutineScope()
     val player = remember(streamUrl, state.provider) {
         PlaybackPlayerFactory.create(context, state.provider)
             .apply { setMediaItem(MediaItem.fromUri(streamUrl)); prepare(); playWhenReady = true }
     }
+    val restartPlayback: (Boolean) -> Unit = { manual ->
+        retryJob?.cancel()
+        retryJob = null
+        if (manual) retries = 0
+        playbackFailed = false
+        playbackDiagnostic = ""
+        playbackInfo = "Connecting…"
+        player.prepare()
+        player.play()
+        overlayVisible = true
+    }
+    val scheduleRecovery: (String) -> Unit = recovery@{ diagnostic ->
+        if (retryJob?.isActive == true) return@recovery
+        val attempt = retries + 1
+        val delayMs = PlaybackRecoveryPolicy.delayForRetry(attempt)
+        playbackDiagnostic = diagnostic
+        overlayVisible = true
+        if (delayMs == null) {
+            playbackFailed = true
+            playbackInfo = "Playback unavailable"
+        } else {
+            retries = attempt
+            playbackInfo = "Reconnecting · $attempt/${PlaybackRecoveryPolicy.maxAutomaticRetries}"
+            retryJob = scope.launch {
+                kotlinx.coroutines.delay(delayMs)
+                player.prepare()
+                player.play()
+                retryJob = null
+            }
+        }
+    }
     DisposableEffect(player) {
         val listener = object : androidx.media3.common.Player.Listener {
-            override fun onIsPlayingChanged(value: Boolean) { isPlaying = value; if (player.playbackState == androidx.media3.common.Player.STATE_READY) playbackInfo = if (value) "Playing" else "Paused" }
+            override fun onIsPlayingChanged(value: Boolean) {
+                isPlaying = value
+                if (player.playbackState == androidx.media3.common.Player.STATE_READY) playbackInfo = if (value) "Playing" else "Paused"
+            }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 playbackInfo = when (playbackState) {
                     androidx.media3.common.Player.STATE_BUFFERING -> "Buffering"
                     androidx.media3.common.Player.STATE_READY -> if (player.isPlaying) "Playing" else "Paused"
-                    androidx.media3.common.Player.STATE_ENDED -> "Ended"
+                    androidx.media3.common.Player.STATE_ENDED -> "Stream ended"
                     else -> "Connecting…"
+                }
+                if (playbackState == androidx.media3.common.Player.STATE_READY) {
+                    playbackFailed = false
+                    playbackDiagnostic = ""
+                } else if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
+                    scheduleRecovery("The live stream ended unexpectedly")
                 }
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                if (retries < 3) { retries++; player.prepare(); player.play() }
-                else playbackInfo = "Playback failed: ${error.errorCodeName}"
+                scheduleRecovery(PlaybackRecoveryPolicy.diagnostic(error))
             }
         }
         player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
+        onDispose { retryJob?.cancel(); player.removeListener(listener); player.release() }
+    }
+    LaunchedEffect(playbackInfo, streamUrl) {
+        if (playbackInfo == "Buffering") {
+            kotlinx.coroutines.delay(PlaybackRecoveryPolicy.bufferingTimeoutMs)
+            if (player.playbackState == androidx.media3.common.Player.STATE_BUFFERING) scheduleRecovery("Buffering timed out")
+        }
+    }
+    LaunchedEffect(isPlaying, streamUrl) {
+        if (isPlaying) {
+            kotlinx.coroutines.delay(30_000)
+            if (player.isPlaying) retries = 0
+        }
     }
     LaunchedEffect(Unit) { playerFocus.requestFocus() }
-    LaunchedEffect(overlayVisible, isPlaying) { if (overlayVisible && isPlaying) { kotlinx.coroutines.delay(4_000); overlayVisible = false } }
+    LaunchedEffect(overlayVisible, isPlaying) { if (overlayVisible && isPlaying && !playbackFailed) { kotlinx.coroutines.delay(4_000); overlayVisible = false } }
     BackHandler { vm.closePlayer() }
     Box(
         Modifier.fillMaxSize().background(Color.Black)
@@ -769,7 +825,7 @@ private fun TvTextField(
                     PlayerRemoteAction.PLAY_PAUSE -> { if (player.isPlaying) player.pause() else player.play(); overlayVisible = true }
                     PlayerRemoteAction.PLAY -> { player.play(); overlayVisible = true }
                     PlayerRemoteAction.PAUSE -> { player.pause(); overlayVisible = true }
-                    PlayerRemoteAction.TOGGLE_OVERLAY -> overlayVisible = !overlayVisible
+                    PlayerRemoteAction.TOGGLE_OVERLAY -> if (playbackFailed) restartPlayback(true) else overlayVisible = !overlayVisible
                     PlayerRemoteAction.NONE -> return@onPreviewKeyEvent false
                 }
                 true
@@ -787,7 +843,16 @@ private fun TvTextField(
                     Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp)).background(Focus), contentAlignment = Alignment.Center) { Text((channel.providerOrder + 1).toString(), fontWeight = FontWeight.Bold, fontSize = 18.sp) }
                     Spacer(Modifier.width(15.dp)); Column { Text(channel.displayName, fontSize = 27.sp, fontWeight = FontWeight.SemiBold); Text("${channel.displayGroup} · $playbackInfo", color = TextMuted, fontSize = 14.sp) }
                 }
-                if (!isPlaying) Icon(Icons.Default.PauseCircle, null, Modifier.align(Alignment.Center).size(76.dp), tint = Color.White)
+                if (playbackFailed) {
+                    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.ErrorOutline, null, Modifier.size(70.dp), tint = Color.White)
+                        Spacer(Modifier.height(14.dp))
+                        Text("Playback unavailable", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        if (playbackDiagnostic.isNotBlank()) Text(playbackDiagnostic, color = TextMuted, fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Press Select to retry", color = Focus, fontWeight = FontWeight.Bold)
+                    }
+                } else if (!isPlaying) Icon(Icons.Default.PauseCircle, null, Modifier.align(Alignment.Center).size(76.dp), tint = Color.White)
                 val current = currentAndNext(channel, state.programsFor(channel)).firstOrNull()
                 Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
                     Text(current?.title ?: "Live TV", fontSize = 27.sp, fontWeight = FontWeight.SemiBold)
