@@ -34,7 +34,7 @@ Download the latest signed APK from [GitHub Releases](https://github.com/Sternpa
 https://github.com/Sternpaul/StreamGuide/releases/latest/download/StreamGuide-firetv.apk
 ```
 
-On Fire TV, install **Downloader by AFTVnews**, enable **Install unknown apps** for Downloader, enter the published StreamGuide Downloader code, and install the APK. Existing installations update in place because releases use the same signing key.
+On Fire TV, install **Downloader by AFTVnews**, enable **Install unknown apps** for Downloader, enter code **8464714**, and install the APK. The matching short URL is `aftv.news/8464714`. Existing installations update in place because releases use the same signing key.
 
 ## Build
 
