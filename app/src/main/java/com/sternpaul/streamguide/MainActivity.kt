@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -44,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -339,7 +342,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun SearchScreen(state: UiState, vm: MainViewModel) {
     Column(Modifier.fillMaxSize().padding(30.dp)) {
         Text("Search", fontSize=28.sp, fontWeight=FontWeight.SemiBold); Spacer(Modifier.height(16.dp))
-        OutlinedTextField(state.query, vm::setQuery, Modifier.fillMaxWidth(), placeholder={Text("Channels and programmes")}, leadingIcon={Icon(Icons.Default.Search,null)}, singleLine=true)
+        TvTextField(state.query, vm::setQuery, Modifier.fillMaxWidth(), placeholder={Text("Channels and programmes")}, leadingIcon={Icon(Icons.Default.Search,null)})
         Spacer(Modifier.height(18.dp)); Text("${state.visibleChannels.size} results", color=TextMuted)
         Spacer(Modifier.height(10.dp)); LazyColumn(verticalArrangement=Arrangement.spacedBy(6.dp)) { items(state.visibleChannels,key={it.id}) { channel -> GuideChannelRow(channel,currentAndNext(channel,state.programs),false,vm) } }
     }
@@ -401,7 +404,7 @@ class MainActivity : ComponentActivity() {
     Column(Modifier.fillMaxSize().padding(horizontal = 30.dp, vertical = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column { Text("Manage channels", fontSize = 27.sp, fontWeight = FontWeight.SemiBold); Text("Manual order and visibility are retained after provider updates", color = TextMuted, fontSize = 13.sp) }
-            Spacer(Modifier.weight(1f)); OutlinedTextField(filter, { filter = it }, Modifier.width(300.dp), placeholder = { Text("Filter channels") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true)
+            Spacer(Modifier.weight(1f)); TvTextField(filter, { filter = it }, Modifier.width(300.dp), placeholder = { Text("Filter channels") }, leadingIcon = { Icon(Icons.Default.Search, null) })
             Spacer(Modifier.width(8.dp)); TvButton({ vm.navigate(AppScreen.SETTINGS) }) { Icon(Icons.Default.Close, null); Spacer(Modifier.width(5.dp)); Text("Done") }
         }
         Spacer(Modifier.height(14.dp))
@@ -411,13 +414,13 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.width(6.dp)); TvButton({ selectedId?.let { vm.moveChannel(it, -10) } }) { Text("−10") }
             Spacer(Modifier.width(6.dp)); TvButton({ selectedId?.let { vm.moveChannel(it, 10) } }) { Text("+10") }
             Spacer(Modifier.width(6.dp)); TvButton({ selectedId?.let { vm.moveChannelTo(it, state.channels.size) } }) { Icon(Icons.Default.VerticalAlignBottom, null); Text("Bottom") }
-            Spacer(Modifier.width(10.dp)); OutlinedTextField(targetPosition, { targetPosition = it.filter(Char::isDigit).take(5) }, Modifier.width(120.dp), placeholder = { Text("Position") }, singleLine = true)
+            Spacer(Modifier.width(10.dp)); TvTextField(targetPosition, { targetPosition = it.filter(Char::isDigit).take(5) }, Modifier.width(120.dp), placeholder = { Text("Position") })
             Spacer(Modifier.width(6.dp)); TvButton({ val target = targetPosition.toIntOrNull(); if (target != null) selectedId?.let { vm.moveChannelTo(it, target) } }, selected = true) { Text("Move") }
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Panel).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(editName, { editName = it.take(80) }, Modifier.weight(1f), label = { Text("Custom channel name") }, placeholder = { Text(selectedChannel?.name.orEmpty()) }, singleLine = true)
-            Spacer(Modifier.width(8.dp)); OutlinedTextField(editGroup, { editGroup = it.take(80) }, Modifier.weight(1f), label = { Text("Custom group") }, placeholder = { Text(selectedChannel?.group.orEmpty()) }, singleLine = true)
+            TvTextField(editName, { editName = it.take(80) }, Modifier.weight(1f), label = { Text("Custom channel name") }, placeholder = { Text(selectedChannel?.name.orEmpty()) })
+            Spacer(Modifier.width(8.dp)); TvTextField(editGroup, { editGroup = it.take(80) }, Modifier.weight(1f), label = { Text("Custom group") }, placeholder = { Text(selectedChannel?.group.orEmpty()) })
             Spacer(Modifier.width(8.dp)); TvButton({ selectedId?.let { vm.customizeChannel(it, editName, editGroup) } }, selected = true) { Icon(Icons.Default.Save, null); Spacer(Modifier.width(5.dp)); Text("Apply") }
         }
         Spacer(Modifier.height(10.dp))
@@ -452,7 +455,7 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.padding(16.dp)) { Text("Automatic update interval",fontWeight=FontWeight.Medium); Text("Default is every 24 hours. Fire OS may run background work later to preserve battery.",color=TextMuted,fontSize=13.sp); Spacer(Modifier.height(12.dp)); Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){ AppSettings.allowedEpgHours.sorted().forEach{h->TvButton({vm.setEpgHours(h)},selected=state.epgHours==h){Text("${h}h")}} } }
         }
         Spacer(Modifier.height(16.dp)); SettingsCard("PARENTAL CONTROLS") {
-            Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(state.hasParentalPin) "Change parental PIN" else "Set parental PIN",fontWeight=FontWeight.Medium);Text("Lock individual channels from the guide",color=TextMuted,fontSize=13.sp)};OutlinedTextField(parentalPin,{parentalPin=it.filter(Char::isDigit).take(12)},Modifier.width(180.dp),placeholder={Text("4–12 digits")},singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation());Spacer(Modifier.width(8.dp));TvButton({vm.setParentalPin(parentalPin);parentalPin=""},selected=true){Icon(Icons.Default.Lock,null);Spacer(Modifier.width(5.dp));Text("Save")}}
+            Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(state.hasParentalPin) "Change parental PIN" else "Set parental PIN",fontWeight=FontWeight.Medium);Text("Lock individual channels from the guide",color=TextMuted,fontSize=13.sp)};TvTextField(parentalPin,{parentalPin=it.filter(Char::isDigit).take(12)},Modifier.width(180.dp),placeholder={Text("4–12 digits")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation());Spacer(Modifier.width(8.dp));TvButton({vm.setParentalPin(parentalPin);parentalPin=""},selected=true){Icon(Icons.Default.Lock,null);Spacer(Modifier.width(5.dp));Text("Save")}}
         }
         Spacer(Modifier.height(16.dp)); SettingsCard("STATUS") {
             Column(Modifier.padding(16.dp)) { StatusLine("Channels",state.channels.size.toString());StatusLine("Programmes",state.programs.size.toString());StatusLine("Last successful update",if(state.status.lastSuccessEpochMs>0) SimpleDateFormat("d MMM, HH:mm",Locale.getDefault()).format(Date(state.status.lastSuccessEpochMs)) else "Never") }
@@ -501,18 +504,107 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.width(420.dp).fillMaxHeight().background(Panel).padding(48.dp),verticalArrangement=Arrangement.Center) {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Focus),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayArrow,null,Modifier.size(42.dp))};Spacer(Modifier.height(22.dp));Text("StreamGuide",fontSize=34.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("Live TV, organized your way.",fontSize=19.sp,color=TextMuted);Spacer(Modifier.height(34.dp));FeatureLine("Fast, remote-first TV guide");FeatureLine("Favorites and durable ordering");FeatureLine("Automatic XMLTV updates");FeatureLine("Private and local-only")
         }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal=70.dp,vertical=42.dp),verticalArrangement=Arrangement.Center) {
-            Text(if(existing==null) "Add your playlist" else "Edit playlist",fontSize=30.sp,fontWeight=FontWeight.SemiBold);Text("StreamGuide does not provide channels. Add your own provider.",color=TextMuted);Spacer(Modifier.height(18.dp));Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){TvButton({type=ProviderType.XTREAM},modifier=Modifier.focusRequester(providerTypeFocus),selected=type==ProviderType.XTREAM){Text("Xtream Codes")};TvButton({type=ProviderType.M3U},selected=type==ProviderType.M3U){Text("M3U / M3U8")}}
-            Spacer(Modifier.height(18.dp));SetupField("Playlist name",name,{name=it})
-            if(type==ProviderType.M3U) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f)){SetupField("M3U playlist URL or local file",playlist,{playlist=it})};Spacer(Modifier.width(8.dp));TvButton({filePicker.launch(arrayOf("application/x-mpegURL","audio/x-mpegurl","text/plain","*/*"))}){Icon(Icons.Default.FolderOpen,null);Spacer(Modifier.width(5.dp));Text("File")}} } else {SetupField("Server URL",server,{server=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Username",username,{username=it})};Box(Modifier.weight(1f)){SetupField("Password",password,{password=it},true)}}}
-            TvButton({additionalOpen=!additionalOpen}) { Icon(if(additionalOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null);Spacer(Modifier.width(7.dp));Text("Additional settings (optional)") }
-            AnimatedVisibility(additionalOpen) { Column(Modifier.padding(top=8.dp)) { SetupField("XMLTV EPG URL (optional)",epg,{epg=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Custom user agent (optional)",userAgent,{userAgent=it})};Box(Modifier.weight(1f)){SetupField("HTTP referer (optional)",referer,{referer=it})}} } }
-            validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=13.sp,modifier=Modifier.padding(top=8.dp))};Spacer(Modifier.weight(1f))
-            TvButton({val valid=if(type==ProviderType.M3U) ProviderValidation.isM3uValid(playlist) else ProviderValidation.isXtreamValid(server,username,password);if(!valid)validation=if(type==ProviderType.XTREAM) "Enter an HTTP or HTTPS server address, username, and password" else "Enter an HTTP/HTTPS playlist URL or choose a local file" else onSave(ProviderConfig(type,name.ifBlank{"My TV"},playlist,server,username,password,epg,userAgent,referer))},selected=true,modifier=Modifier.width(240.dp)){Icon(Icons.Default.CheckCircle,null);Spacer(Modifier.width(8.dp));Text("Finish setup")}
+        Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 70.dp, vertical = 32.dp)) {
+            Text(if (existing == null) "Add your playlist" else "Edit playlist", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+            Text("StreamGuide does not provide channels. Add your own provider.", color = TextMuted)
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton({ type = ProviderType.XTREAM }, modifier = Modifier.focusRequester(providerTypeFocus), selected = type == ProviderType.XTREAM) { Text("Xtream Codes") }
+                TvButton({ type = ProviderType.M3U }, selected = type == ProviderType.M3U) { Text("M3U / M3U8") }
+            }
+            Spacer(Modifier.height(12.dp))
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                SetupField("Playlist name", name, { name = it })
+                if (type == ProviderType.M3U) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { SetupField("M3U playlist URL or local file", playlist, { playlist = it }) }
+                        Spacer(Modifier.width(8.dp))
+                        TvButton({ filePicker.launch(arrayOf("application/x-mpegURL", "audio/x-mpegurl", "text/plain", "*/*")) }) { Text("Choose file") }
+                    }
+                } else {
+                    SetupField("Server URL", server, { server = it })
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(Modifier.weight(1f)) { SetupField("Username", username, { username = it }) }
+                        Box(Modifier.weight(1f)) { SetupField("Password", password, { password = it }, true) }
+                    }
+                }
+                TvButton({ additionalOpen = !additionalOpen }) { Text(if (additionalOpen) "Hide additional settings" else "Additional settings (optional)") }
+                AnimatedVisibility(additionalOpen) {
+                    Column(Modifier.padding(top = 8.dp)) {
+                        SetupField("XMLTV EPG URL (optional)", epg, { epg = it })
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box(Modifier.weight(1f)) { SetupField("Custom user agent (optional)", userAgent, { userAgent = it }) }
+                            Box(Modifier.weight(1f)) { SetupField("HTTP referer (optional)", referer, { referer = it }) }
+                        }
+                    }
+                }
+                validation?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
+            }
+            HorizontalDivider(color = Color(0xFF27303C))
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Press Select on a field to open the keyboard.", color = TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                TvButton({
+                    val valid = if (type == ProviderType.M3U) ProviderValidation.isM3uValid(playlist) else ProviderValidation.isXtreamValid(server, username, password)
+                    if (!valid) validation = if (type == ProviderType.XTREAM) "Enter an HTTP or HTTPS server address, username, and password" else "Enter an HTTP/HTTPS playlist URL or choose a local file"
+                    else onSave(ProviderConfig(type, name.ifBlank { "My TV" }, playlist, server, username, password, epg, userAgent, referer))
+                }, selected = true, modifier = Modifier.width(240.dp)) { Text("Finish setup") }
+            }
         }
     }
 }
-@Composable private fun SetupField(label:String,value:String,onChange:(String)->Unit,password:Boolean=false){OutlinedTextField(value,onChange,Modifier.fillMaxWidth().padding(bottom=10.dp),label={Text(label)},singleLine=true,visualTransformation=if(password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None)}
+
+@Composable
+private fun SetupField(label: String, value: String, onChange: (String) -> Unit, password: Boolean = false) {
+    TvTextField(
+        value = value,
+        onValueChange = onChange,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        label = { Text(label) },
+        visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        showEditHint = true
+    )
+}
+
+@Composable
+private fun TvTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: (@Composable () -> Unit)? = null,
+    placeholder: (@Composable () -> Unit)? = null,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
+    showEditHint: Boolean = false
+) {
+    val activation = remember { PressToEditState() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(activation.isEditing) {
+        if (activation.isEditing) {
+            withFrameNanos { }
+            keyboard?.show()
+        } else {
+            keyboard?.hide()
+        }
+    }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier
+            .onFocusChanged { activation.onFocusChanged(it.isFocused) }
+            .onPreviewKeyEvent { event ->
+                val keyCode = event.nativeKeyEvent.keyCode
+                val isSelect = keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                event.nativeKeyEvent.action == KeyEvent.ACTION_UP && isSelect && activation.onPress()
+            },
+        label = label,
+        placeholder = placeholder,
+        leadingIcon = leadingIcon,
+        supportingText = if (showEditHint && !activation.isEditing) ({ Text("Press Select to edit", color = TextMuted, fontSize = 11.sp) }) else null,
+        singleLine = true,
+        readOnly = activation.isReadOnly,
+        visualTransformation = visualTransformation
+    )
+}
 @Composable private fun FeatureLine(text:String){Row(Modifier.padding(vertical=7.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.CheckCircle,null,tint=Success,modifier=Modifier.size(18.dp));Spacer(Modifier.width(10.dp));Text(text,color=TextMuted)}}
 
 @Composable private fun PlayerScreen(state: UiState, vm: MainViewModel) {
@@ -613,7 +705,7 @@ private fun TvButton(
     }
 }
 @Composable private fun EmptyGuide(hasProvider:Boolean,onRefresh:()->Unit){Column(Modifier.fillMaxWidth().padding(70.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Default.LiveTv,null,Modifier.size(50.dp),tint=TextMuted);Spacer(Modifier.height(15.dp));Text(if(hasProvider)"No channels loaded" else "Add a playlist",fontSize=21.sp);Text("Update your playlist to populate the guide",color=TextMuted);Spacer(Modifier.height(16.dp));TvButton(onRefresh,selected=true){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(7.dp));Text("Update now")}}}
-@Composable private fun ParentalPinDialog(onSubmit:(String)->Unit,onCancel:()->Unit){var pin by remember{mutableStateOf("")};AlertDialog(onDismissRequest=onCancel,icon={Icon(Icons.Default.Lock,null)},title={Text("Parental control")},text={Column{Text("Enter the PIN to watch this channel.",color=TextMuted);Spacer(Modifier.height(12.dp));OutlinedTextField(pin,{pin=it.filter(Char::isDigit).take(12)},singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),placeholder={Text("PIN")})}},confirmButton={TvButton({onSubmit(pin)},selected=true){Text("Unlock")}},dismissButton={TvButton(onCancel){Text("Cancel")}})}
+@Composable private fun ParentalPinDialog(onSubmit:(String)->Unit,onCancel:()->Unit){var pin by remember{mutableStateOf("")};AlertDialog(onDismissRequest=onCancel,icon={Icon(Icons.Default.Lock,null)},title={Text("Parental control")},text={Column{Text("Enter the PIN to watch this channel.",color=TextMuted);Spacer(Modifier.height(12.dp));TvTextField(pin,{pin=it.filter(Char::isDigit).take(12)},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),placeholder={Text("PIN")})}},confirmButton={TvButton({onSubmit(pin)},selected=true){Text("Unlock")}},dismissButton={TvButton(onCancel){Text("Cancel")}})}
 @Composable private fun ErrorBanner(message:String,onDismiss:()->Unit){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.BottomCenter){Surface(Modifier.padding(24.dp).combinedClickable(onClick=onDismiss),shape=RoundedCornerShape(8.dp),color=Color(0xFF632A32),border=BorderStroke(1.dp,Color(0xFFFF7785))){Row(Modifier.padding(15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Error,null);Spacer(Modifier.width(10.dp));Text(message);Spacer(Modifier.width(18.dp));Text("Dismiss",fontWeight=FontWeight.Bold)}}}}
 private fun currentAndNext(channel:Channel,programs:List<Program>):List<Program>{val now=System.currentTimeMillis();val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs>now}.sortedBy{it.startEpochMs}.take(2).toList()}
 private fun lastCatchup(channel:Channel,programs:List<Program>):Program?{if(channel.catchupDays<=0)return null;val now=System.currentTimeMillis();val cutoff=now-channel.catchupDays*86_400_000L;val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs in cutoff..now}.maxByOrNull{it.endEpochMs}}
