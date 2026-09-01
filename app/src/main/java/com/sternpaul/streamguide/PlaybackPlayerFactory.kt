@@ -8,6 +8,7 @@ import com.sternpaul.streamguide.core.ProviderConfig
 import com.sternpaul.streamguide.core.ProviderHeaders
 
 object PlaybackPlayerFactory {
+    @androidx.media3.common.util.UnstableApi
     fun create(context: Context, provider: ProviderConfig?): ExoPlayer {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
