@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun NavButton(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
-    TvButton(onClick, selected = selected, modifier = Modifier.padding(end = 8.dp)) { Icon(icon, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(label) }
+    TvButton(onClick, selected = selected, modifier = Modifier.padding(end = 8.dp), onFocus = onClick) { Icon(icon, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(label) }
 }
 
 @Composable private fun Clock() {
@@ -577,15 +577,6 @@ private fun TvTextField(
     showEditHint: Boolean = false
 ) {
     val activation = remember { PressToEditState() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    LaunchedEffect(activation.isEditing) {
-        if (activation.isEditing) {
-            withFrameNanos { }
-            keyboard?.show()
-        } else {
-            keyboard?.hide()
-        }
-    }
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -685,6 +676,7 @@ private fun TvButton(
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     danger: Boolean = false,
+    onFocus: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -696,7 +688,7 @@ private fun TvButton(
         else -> Panel2
     }
     Surface(
-        modifier.scale(focusScale).onFocusChanged { focused = it.isFocused }.focusable().combinedClickable(onClick = onClick),
+        modifier.scale(focusScale).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }.focusable().combinedClickable(onClick = onClick),
         shape = RoundedCornerShape(7.dp),
         color = bg,
         border = if (focused) BorderStroke(2.dp, Color.White) else null

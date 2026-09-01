@@ -29,6 +29,9 @@ data class UiState(
     val error: String? = null,
     val status: RefreshStatus = RefreshStatus(),
     val epgHours: Int = AppSettings.DEFAULT_EPG_HOURS,
+    val epgAutoUpdate: Boolean = true,
+    val updateEpgOnStart: Boolean = true,
+    val updatePlaylistOnStart: Boolean = false,
     val query: String = "",
     val multiviewIds: List<String> = emptyList(),
     val hasParentalPin: Boolean = false,
@@ -65,7 +68,17 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         private set
 
     init {
-        if (state.provider != null && (store.lastRefresh() == 0L || System.currentTimeMillis() - store.lastRefresh() > state.epgHours * 3_600_000L)) refresh()
+        val action = RefreshPolicy.onAppStart(
+            hasProvider = state.provider != null,
+            playlistOnStart = state.updatePlaylistOnStart,
+            epgOnStart = state.updateEpgOnStart,
+            epgIsStale = store.lastRefresh() == 0L || System.currentTimeMillis() - store.lastRefresh() > state.epgHours * 3_600_000L
+        )
+        when (action) {
+            StartupRefreshAction.FULL_PLAYLIST -> refresh()
+            StartupRefreshAction.EPG_ONLY -> refreshEpgOnly()
+            StartupRefreshAction.NONE -> Unit
+        }
     }
 
     private fun loadState(): UiState {
@@ -74,7 +87,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             screen = if (provider == null) AppScreen.SETUP else AppScreen.GUIDE,
             provider = provider, channels = channels, programs = programs,
             selectedChannelId = channels.firstOrNull()?.id,
-            epgHours = store.epgHours(), hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
+            epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updateEpgOnStart = store.updateEpgOnStart(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
+            hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, programs.size)
         )
     }
@@ -163,6 +177,25 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         }
     }
 
+    fun refreshEpgOnly() {
+        if (state.loading || state.provider == null) return
+        state = state.copy(loading = true, error = null, status = state.status.copy(running = true, message = "Updating TV guide…"))
+        viewModelScope.launch {
+            runCatching { repository.refreshEpg() }
+                .onSuccess { count ->
+                    state = state.copy(
+                        loading = false,
+                        programs = store.getPrograms(),
+                        status = state.status.copy(running = false, lastSuccessEpochMs = store.lastRefresh(), message = "Updated $count guide programmes", programCount = count)
+                    )
+                }
+                .onFailure { error ->
+                    val message = error.message ?: "TV guide update failed"
+                    state = state.copy(loading = false, error = message, status = state.status.copy(running = false, message = message))
+                }
+        }
+    }
+
     fun toggleFavorite(id: String) = mutateChannels { list -> list.map { if (it.id == id) it.copy(favorite = !it.favorite) else it } }
     fun moveChannel(id: String, delta: Int) = mutateChannels { ChannelReconciler.move(it, id, delta) }
     fun moveChannelTo(id: String, oneBasedPosition: Int) = mutateChannels { ChannelReconciler.moveTo(it, id, oneBasedPosition) }
@@ -174,6 +207,9 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     }
 
     fun setEpgHours(hours: Int) { store.setEpgHours(hours); state = state.copy(epgHours = hours); app.scheduleEpg() }
+    fun setEpgAutoUpdate(enabled: Boolean) { store.setEpgAutoUpdate(enabled); state = state.copy(epgAutoUpdate = enabled); app.scheduleEpg() }
+    fun setUpdateEpgOnStart(enabled: Boolean) { store.setUpdateEpgOnStart(enabled); state = state.copy(updateEpgOnStart = enabled) }
+    fun setUpdatePlaylistOnStart(enabled: Boolean) { store.setUpdatePlaylistOnStart(enabled); state = state.copy(updatePlaylistOnStart = enabled) }
     fun clearProvider() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { store.clearProvider() }

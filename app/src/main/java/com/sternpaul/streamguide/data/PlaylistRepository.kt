@@ -1,9 +1,7 @@
 package com.sternpaul.streamguide.data
 
 import com.sternpaul.streamguide.core.*
-import java.io.ByteArrayInputStream
 import java.io.InputStream
-import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -49,10 +47,7 @@ class PlaylistRepository(private val store: AppStore) {
         response.use {
             if (!it.isSuccessful) error("EPG HTTP ${it.code}")
             val body = it.body ?: error("Empty EPG response")
-            val raw = body.bytes()
-            require(raw.size <= 80 * 1024 * 1024) { "EPG download is too large" }
-            val stream: InputStream = if (url.endsWith(".gz", true) || it.header("Content-Encoding", "").orEmpty().contains("gzip", true) || raw.take(2) == listOf(0x1f.toByte(),0x8b.toByte())) GZIPInputStream(ByteArrayInputStream(raw)) else ByteArrayInputStream(raw)
-            val parsed = stream.use(XmlTvParser::parse)
+            val parsed = EpgInput.open(body.byteStream(), url, it.header("Content-Encoding").orEmpty()).use(XmlTvParser::parse)
             require(parsed.isNotEmpty()) { "EPG contained no valid programmes" }
             return parsed
         }

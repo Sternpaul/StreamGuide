@@ -17,7 +17,12 @@ class StreamGuideApp : Application() {
     lateinit var container: AppContainer
     override fun onCreate() { super.onCreate(); container = AppContainer(this); scheduleEpg() }
     fun scheduleEpg() {
+        val workManager = WorkManager.getInstance(this)
+        if (!container.store.epgAutoUpdate()) {
+            workManager.cancelUniqueWork("epg-refresh")
+            return
+        }
         val request = PeriodicWorkRequestBuilder<EpgRefreshWorker>(container.store.epgHours().toLong(), TimeUnit.HOURS).build()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork("epg-refresh", ExistingPeriodicWorkPolicy.UPDATE, request)
+        workManager.enqueueUniquePeriodicWork("epg-refresh", ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 }

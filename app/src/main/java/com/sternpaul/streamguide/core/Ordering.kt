@@ -8,6 +8,7 @@ object ChannelOrdering {
 
 object ChannelReconciler {
     fun reconcile(old: List<Channel>, refreshed: List<Channel>): List<Channel> {
+        if (old.isEmpty()) return refreshed
         val previous = old.associateBy { it.id }
         var nextRank = (old.mapNotNull { it.manualRank }.maxOrNull() ?: 0L) + 1000L
         return refreshed.map { incoming ->
