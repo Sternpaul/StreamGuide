@@ -13,14 +13,21 @@ import java.util.concurrent.TimeUnit
 class PlaylistRepository(private val store: AppStore) {
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS).followRedirects(true).build()
 
-    suspend fun refreshAll(): RefreshStatus = withContext(Dispatchers.IO) {
+    suspend fun refreshAll(onProgress: suspend (String) -> Unit = {}): RefreshStatus = withContext(Dispatchers.IO) {
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
+            onProgress("Connecting to ${provider.name}")
+            onProgress("Downloading live channel list")
             val playlistText = download(provider, ProviderEndpoints.playlist(provider)).use { it.readLimitedText(50 * 1024 * 1024) }
+            onProgress("Parsing channel list")
             val parsed = M3uParser.parse(playlistText)
-            require(parsed.isNotEmpty()) { "Playlist contained no valid live channels" }
+            require(parsed.isNotEmpty()) { "The provider returned no valid live channels. Check the server address and credentials." }
+            onProgress("Found ${parsed.size} live channels")
             val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
-            val epg = runCatching { refreshEpgInternal(provider) }.getOrElse { store.getPrograms() }
+            onProgress("Downloading TV guide")
+            val epg = runCatching { refreshEpgInternal(provider) }.getOrElse { error -> onProgress("Guide unavailable: ${error.message}. Keeping the previous guide."); store.getPrograms() }
+            onProgress("Found ${epg.size} guide programmes")
+            onProgress("Saving channels and guide")
             store.saveChannels(reconciled)
             store.savePrograms(epg)
             store.setLastRefresh(System.currentTimeMillis()); store.setLastError("")

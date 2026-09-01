@@ -4,6 +4,8 @@ A private, local-only live IPTV player for Fire TV, designed for the Fire TV Sti
 
 ## Included
 
+- Xtream-first, remote-friendly setup with optional settings collapsed and a pinned Finish setup action
+- First-import progress screen with live channel/EPG phases, counts, retry, editable details, and clear HTTP/credential errors
 - M3U/M3U8 URL or local-file import and Xtream Codes live-TV providers
 - Configurable provider user-agent and HTTP referer headers
 - XMLTV/XMLTV.gz guide import

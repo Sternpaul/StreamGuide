@@ -11,7 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, EDIT_PROVIDER, MULTIVIEW, PLAYER, SETUP }
+enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
 
 data class UiState(
@@ -36,7 +36,9 @@ data class UiState(
     val timelineStart: Long = System.currentTimeMillis() / 1_800_000L * 1_800_000L,
     val timelineHours: Int = 3,
     val selectedProgram: Program? = null,
-    val recentChannelIds: List<String> = emptyList()
+    val recentChannelIds: List<String> = emptyList(),
+    val importLog: List<String> = emptyList(),
+    val importFinished: Boolean = false
 ) {
     val groups: List<String> get() = listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
     val visibleChannels: List<Channel> get() {
@@ -131,8 +133,25 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun clearError() { state = state.copy(error = null) }
 
     fun saveProvider(provider: ProviderConfig) {
-        store.saveProvider(provider); state = state.copy(provider = provider, screen = AppScreen.GUIDE); app.scheduleEpg(); refresh()
+        store.saveProvider(provider)
+        app.scheduleEpg()
+        state = state.copy(provider = provider, screen = AppScreen.IMPORT_STATUS, loading = true, error = null, importLog = listOf("Setup saved"), importFinished = false)
+        viewModelScope.launch {
+            runCatching {
+                repository.refreshAll { message -> withContext(Dispatchers.Main) { state = state.copy(importLog = state.importLog + message) } }
+            }.onSuccess { status ->
+                val channels = store.getChannels(); val programs = store.getPrograms()
+                state = state.copy(loading = false, channels = channels, programs = programs, status = status, selectedChannelId = channels.firstOrNull()?.id, importLog = state.importLog + "Setup complete", importFinished = true)
+            }.onFailure { error ->
+                val message = error.message ?: "The provider could not be loaded"
+                state = state.copy(loading = false, error = message, status = state.status.copy(running = false, message = message), importLog = state.importLog + "ERROR: $message", importFinished = false)
+            }
+        }
     }
+
+    fun finishImport() { if (state.importFinished) state = state.copy(screen = AppScreen.GUIDE, error = null) }
+    fun retryImport() { state.provider?.let(::saveProvider) }
+    fun editProviderFromImport() { state = state.copy(screen = AppScreen.EDIT_PROVIDER, error = null) }
 
     fun refresh() {
         if (state.loading || state.provider == null) return

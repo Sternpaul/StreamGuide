@@ -22,6 +22,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
@@ -36,6 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -91,6 +94,7 @@ class MainActivity : ComponentActivity() {
         when (state.screen) {
             AppScreen.SETUP -> SetupScreen(null, vm::saveProvider)
             AppScreen.EDIT_PROVIDER -> SetupScreen(state.provider, vm::saveProvider)
+            AppScreen.IMPORT_STATUS -> ImportStatusScreen(state, vm)
             AppScreen.PLAYER -> PlayerScreen(state, vm)
             else -> Column {
                 AppTopBar(state, vm)
@@ -105,7 +109,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         state.pendingPinChannelId?.let { ParentalPinDialog(vm::submitParentalPin, vm::cancelParentalPin) }
-        state.error?.let { ErrorBanner(it, vm::clearError) }
+        if (state.screen != AppScreen.IMPORT_STATUS) state.error?.let { ErrorBanner(it, vm::clearError) }
     }
 }
 
@@ -461,8 +465,34 @@ class MainActivity : ComponentActivity() {
 @Composable private fun SettingRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit){TvButton(onClick,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=1)}}}
 @Composable private fun StatusLine(label:String,value:String){Row(Modifier.fillMaxWidth().padding(vertical=5.dp)){Text(label,color=TextMuted);Spacer(Modifier.weight(1f));Text(value,fontWeight=FontWeight.Medium)}}
 
+@Composable private fun ImportStatusScreen(state: UiState, vm: MainViewModel) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(state.importLog.size) { if (state.importLog.isNotEmpty()) listState.animateScrollToItem(state.importLog.lastIndex) }
+    Column(Modifier.fillMaxSize().background(Bg).padding(horizontal = 90.dp, vertical = 54.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(11.dp)).background(if(state.error==null) Focus else Color(0xFF8A3038)), contentAlignment = Alignment.Center) { Icon(if(state.error==null) Icons.Default.CloudDownload else Icons.Default.Error, null, Modifier.size(30.dp)) }
+            Spacer(Modifier.width(16.dp)); Column { Text(if(state.importFinished) "Your TV is ready" else if(state.error!=null) "Setup needs attention" else "Setting up ${state.provider?.name.orEmpty()}", fontSize=29.sp, fontWeight=FontWeight.SemiBold); Text(if(state.importFinished) "${state.channels.size} channels · ${state.programs.size} programmes" else "You can follow each import step below.", color=TextMuted) }
+            Spacer(Modifier.weight(1f)); if(state.loading) CircularProgressIndicator(Modifier.size(32.dp), strokeWidth=3.dp)
+        }
+        Spacer(Modifier.height(24.dp))
+        Column(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Panel).padding(18.dp)) {
+            Text("IMPORT LOG", color=TextMuted, fontSize=11.sp, fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp))
+            LazyColumn(state=listState, verticalArrangement=Arrangement.spacedBy(7.dp)) { itemsIndexed(state.importLog) { index, message -> Row(verticalAlignment=Alignment.CenterVertically) { Icon(if(message.startsWith("ERROR")) Icons.Default.Error else if(index==state.importLog.lastIndex && state.loading) Icons.Default.Sync else Icons.Default.CheckCircle, null, Modifier.size(17.dp), tint=if(message.startsWith("ERROR")) MaterialTheme.colorScheme.error else if(index==state.importLog.lastIndex && state.loading) Focus else Success);Spacer(Modifier.width(10.dp));Text(message,color=if(message.startsWith("ERROR")) MaterialTheme.colorScheme.error else TextPrimary,fontSize=14.sp) } } }
+        }
+        state.error?.let { Spacer(Modifier.height(12.dp)); Surface(shape=RoundedCornerShape(8.dp),color=Color(0xFF632A32),border=BorderStroke(1.dp,Color(0xFFFF7785))){Column(Modifier.fillMaxWidth().padding(14.dp)){Text(it,fontWeight=FontWeight.SemiBold);Text("Check the server address, port, username and password. HTTP and HTTPS are both supported.",color=TextMuted,fontSize=12.sp)}} }
+        Spacer(Modifier.height(16.dp)); Row(horizontalArrangement=Arrangement.spacedBy(9.dp)) {
+            if(state.importFinished) TvButton(vm::finishImport, selected=true) { Icon(Icons.Default.LiveTv,null);Spacer(Modifier.width(7.dp));Text("Open Live TV") }
+            if(state.error!=null) { TvButton(vm::retryImport,selected=true){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(7.dp));Text("Try again")};TvButton(vm::editProviderFromImport){Icon(Icons.Default.Edit,null);Spacer(Modifier.width(7.dp));Text("Edit details")} }
+            if(state.loading) Text("Please keep StreamGuide open during the first import.",color=TextMuted,modifier=Modifier.align(Alignment.CenterVertically))
+        }
+    }
+}
+
 @Composable private fun SetupScreen(existing: ProviderConfig?, onSave: (ProviderConfig)->Unit) {
-    var type by remember(existing) { mutableStateOf(existing?.type ?: ProviderType.M3U) }; var name by remember(existing) { mutableStateOf(existing?.name ?: "My TV") }; var playlist by remember(existing) { mutableStateOf(existing?.playlistUrl.orEmpty()) }; var server by remember(existing) { mutableStateOf(existing?.serverUrl.orEmpty()) }; var username by remember(existing) { mutableStateOf(existing?.username.orEmpty()) }; var password by remember(existing) { mutableStateOf(existing?.password.orEmpty()) }; var epg by remember(existing) { mutableStateOf(existing?.epgUrl.orEmpty()) }; var userAgent by remember(existing) { mutableStateOf(existing?.userAgent.orEmpty()) }; var referer by remember(existing) { mutableStateOf(existing?.referer.orEmpty()) }; var validation by remember { mutableStateOf<String?>(null) }
+    var type by remember(existing) { mutableStateOf(existing?.type ?: ProviderType.XTREAM) }; var name by remember(existing) { mutableStateOf(existing?.name ?: "My TV") }; var playlist by remember(existing) { mutableStateOf(existing?.playlistUrl.orEmpty()) }; var server by remember(existing) { mutableStateOf(existing?.serverUrl.orEmpty()) }; var username by remember(existing) { mutableStateOf(existing?.username.orEmpty()) }; var password by remember(existing) { mutableStateOf(existing?.password.orEmpty()) }; var epg by remember(existing) { mutableStateOf(existing?.epgUrl.orEmpty()) }; var userAgent by remember(existing) { mutableStateOf(existing?.userAgent.orEmpty()) }; var referer by remember(existing) { mutableStateOf(existing?.referer.orEmpty()) }; var validation by remember { mutableStateOf<String?>(null) }
+    var additionalOpen by remember { mutableStateOf(false) }
+    val providerTypeFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { providerTypeFocus.requestFocus() }
     val context = LocalContext.current
     val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }; playlist = uri.toString() }
@@ -472,12 +502,13 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Focus),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayArrow,null,Modifier.size(42.dp))};Spacer(Modifier.height(22.dp));Text("StreamGuide",fontSize=34.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("Live TV, organized your way.",fontSize=19.sp,color=TextMuted);Spacer(Modifier.height(34.dp));FeatureLine("Fast, remote-first TV guide");FeatureLine("Favorites and durable ordering");FeatureLine("Automatic XMLTV updates");FeatureLine("Private and local-only")
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal=70.dp,vertical=42.dp),verticalArrangement=Arrangement.Center) {
-            Text("Add your playlist",fontSize=30.sp,fontWeight=FontWeight.SemiBold);Text("StreamGuide does not provide channels. Add your own provider.",color=TextMuted);Spacer(Modifier.height(24.dp));Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){TvButton({type=ProviderType.M3U},selected=type==ProviderType.M3U){Text("M3U / M3U8")};TvButton({type=ProviderType.XTREAM},selected=type==ProviderType.XTREAM){Text("Xtream Codes")}}
+            Text(if(existing==null) "Add your playlist" else "Edit playlist",fontSize=30.sp,fontWeight=FontWeight.SemiBold);Text("StreamGuide does not provide channels. Add your own provider.",color=TextMuted);Spacer(Modifier.height(18.dp));Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){TvButton({type=ProviderType.XTREAM},modifier=Modifier.focusRequester(providerTypeFocus),selected=type==ProviderType.XTREAM){Text("Xtream Codes")};TvButton({type=ProviderType.M3U},selected=type==ProviderType.M3U){Text("M3U / M3U8")}}
             Spacer(Modifier.height(18.dp));SetupField("Playlist name",name,{name=it})
             if(type==ProviderType.M3U) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f)){SetupField("M3U playlist URL or local file",playlist,{playlist=it})};Spacer(Modifier.width(8.dp));TvButton({filePicker.launch(arrayOf("application/x-mpegURL","audio/x-mpegurl","text/plain","*/*"))}){Icon(Icons.Default.FolderOpen,null);Spacer(Modifier.width(5.dp));Text("File")}} } else {SetupField("Server URL",server,{server=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Username",username,{username=it})};Box(Modifier.weight(1f)){SetupField("Password",password,{password=it},true)}}}
-            SetupField("XMLTV EPG URL (optional)",epg,{epg=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Custom user agent (optional)",userAgent,{userAgent=it})};Box(Modifier.weight(1f)){SetupField("HTTP referer (optional)",referer,{referer=it})}}
-            validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=13.sp)};Spacer(Modifier.height(12.dp))
-            TvButton({val valid=if(type==ProviderType.M3U) playlist.startsWith("http")||playlist.startsWith("content://") else server.startsWith("http")&&username.isNotBlank()&&password.isNotBlank();if(!valid)validation="Enter valid provider details" else onSave(ProviderConfig(type,name.ifBlank{"My TV"},playlist,server,username,password,epg,userAgent,referer))},selected=true,modifier=Modifier.width(220.dp)){Icon(Icons.Default.Add,null);Spacer(Modifier.width(8.dp));Text(if(existing==null)"Add and update" else "Save and update")}
+            TvButton({additionalOpen=!additionalOpen}) { Icon(if(additionalOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null);Spacer(Modifier.width(7.dp));Text("Additional settings (optional)") }
+            AnimatedVisibility(additionalOpen) { Column(Modifier.padding(top=8.dp)) { SetupField("XMLTV EPG URL (optional)",epg,{epg=it});Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Box(Modifier.weight(1f)){SetupField("Custom user agent (optional)",userAgent,{userAgent=it})};Box(Modifier.weight(1f)){SetupField("HTTP referer (optional)",referer,{referer=it})}} } }
+            validation?.let{Text(it,color=MaterialTheme.colorScheme.error,fontSize=13.sp,modifier=Modifier.padding(top=8.dp))};Spacer(Modifier.weight(1f))
+            TvButton({val valid=if(type==ProviderType.M3U) ProviderValidation.isM3uValid(playlist) else ProviderValidation.isXtreamValid(server,username,password);if(!valid)validation=if(type==ProviderType.XTREAM) "Enter an HTTP or HTTPS server address, username, and password" else "Enter an HTTP/HTTPS playlist URL or choose a local file" else onSave(ProviderConfig(type,name.ifBlank{"My TV"},playlist,server,username,password,epg,userAgent,referer))},selected=true,modifier=Modifier.width(240.dp)){Icon(Icons.Default.CheckCircle,null);Spacer(Modifier.width(8.dp));Text("Finish setup")}
         }
     }
 }
