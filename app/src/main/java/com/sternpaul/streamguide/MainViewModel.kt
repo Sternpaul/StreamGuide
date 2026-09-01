@@ -13,12 +13,37 @@ import kotlinx.coroutines.withContext
 
 enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
+enum class OverlayMenu { NONE, APP, CHANNEL }
+
+object NavigationPolicy {
+    fun afterDestinationSelected(): OverlayMenu = OverlayMenu.NONE
+    fun onOptionsPressed(screen: AppScreen): OverlayMenu = if (screen == AppScreen.GUIDE) OverlayMenu.CHANNEL else OverlayMenu.NONE
+}
+
+class ProgramIndex(programs: List<Program>) {
+    private val byChannelId: Map<String, List<Program>> = programs.groupBy { it.channelId }
+
+    private fun channelIds(channel: Channel): List<String> = listOf(channel.id, channel.tvgId).filter { it.isNotBlank() }.distinct()
+
+    fun forChannel(channel: Channel): List<Program> {
+        return channelIds(channel).asSequence()
+            .flatMap { byChannelId[it].orEmpty().asSequence() }
+            .distinct()
+            .sortedBy { it.startEpochMs }
+            .toList()
+    }
+
+    fun containsTitle(channel: Channel, query: String): Boolean = channelIds(channel).any { id ->
+        byChannelId[id].orEmpty().any { it.title.contains(query, ignoreCase = true) }
+    }
+}
 
 data class UiState(
     val screen: AppScreen = AppScreen.GUIDE,
     val provider: ProviderConfig? = null,
     val channels: List<Channel> = emptyList(),
     val programs: List<Program> = emptyList(),
+    val programIndex: ProgramIndex = ProgramIndex(programs),
     val selectedGroup: String = "All channels",
     val selectedChannelId: String? = null,
     val playingChannelId: String? = null,
@@ -41,23 +66,46 @@ data class UiState(
     val selectedProgram: Program? = null,
     val recentChannelIds: List<String> = emptyList(),
     val importLog: List<String> = emptyList(),
-    val importFinished: Boolean = false
+    val importFinished: Boolean = false,
+    val overlayMenu: OverlayMenu = OverlayMenu.NONE
 ) {
-    val groups: List<String> get() = listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
-    val visibleChannels: List<Channel> get() {
-        val filtered = channels.filterNot { it.hidden }.filter {
+    private val visibleGroupCounts: Map<String, Int> by lazy(LazyThreadSafetyMode.NONE) {
+        channels.asSequence().filterNot { it.hidden }.groupingBy { it.displayGroup }.eachCount()
+    }
+    private val visibleFavoriteCount: Int by lazy(LazyThreadSafetyMode.NONE) {
+        channels.count { it.favorite && !it.hidden }
+    }
+    private val visibleChannelCount: Int by lazy(LazyThreadSafetyMode.NONE) {
+        channels.count { !it.hidden }
+    }
+    fun channelCountForGroup(group: String): Int = when (group) {
+        "All channels" -> visibleChannelCount
+        "Favorites" -> visibleFavoriteCount
+        else -> visibleGroupCounts[group] ?: 0
+    }
+    val groups: List<String> by lazy(LazyThreadSafetyMode.NONE) {
+        listOf("All channels", "Favorites") + channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
+    }
+    val visibleChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
+        val normalizedQuery = query.trim()
+        val filtered = channels.asSequence().filterNot { it.hidden }.filter {
             when {
                 favoritesOnly || selectedGroup == "Favorites" -> it.favorite
                 selectedGroup != "All channels" -> it.displayGroup == selectedGroup
                 else -> true
             }
-        }.filter { query.isBlank() || it.displayName.contains(query, true) || programs.any { p -> (p.channelId == it.tvgId || p.channelId == it.id) && p.title.contains(query, true) } }
-        return when (sort) {
+        }.filter { channel ->
+            normalizedQuery.isBlank() ||
+                channel.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                programIndex.containsTitle(channel, normalizedQuery)
+        }.toList()
+        when (sort) {
             ChannelSort.MANUAL -> filtered.sortedWith(ChannelOrdering.manual)
             ChannelSort.ALPHABETICAL -> filtered.sortedWith(ChannelOrdering.alphabetical)
             ChannelSort.PROVIDER -> filtered.sortedWith(ChannelOrdering.provider)
         }
     }
+    fun programsFor(channel: Channel): List<Program> = programIndex.forChannel(channel)
     val playingChannel: Channel? get() = channels.firstOrNull { it.id == playingChannelId }
 }
 
@@ -93,7 +141,19 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         )
     }
 
-    fun navigate(screen: AppScreen) { state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "") }
+    fun navigate(screen: AppScreen) { state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "", overlayMenu = NavigationPolicy.afterDestinationSelected()) }
+    fun toggleAppMenu() { state = state.copy(overlayMenu = if (state.overlayMenu == OverlayMenu.APP) OverlayMenu.NONE else OverlayMenu.APP) }
+    fun toggleChannelMenu() {
+        if (state.screen != AppScreen.GUIDE) return
+        state = state.copy(overlayMenu = if (state.overlayMenu == OverlayMenu.CHANNEL) OverlayMenu.NONE else OverlayMenu.CHANNEL)
+    }
+    fun onRemoteOptionsPressed(): Boolean {
+        val menu = NavigationPolicy.onOptionsPressed(state.screen)
+        if (menu == OverlayMenu.NONE) return false
+        toggleChannelMenu()
+        return true
+    }
+    fun closeOverlayMenu() { state = state.copy(overlayMenu = OverlayMenu.NONE) }
     fun selectGroup(group: String) { state = state.copy(selectedGroup = group, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.displayGroup == group }?.id) }
     fun selectChannel(id: String) { state = state.copy(selectedChannelId = id) }
     fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program) }
@@ -155,7 +215,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                 repository.refreshAll { message -> withContext(Dispatchers.Main) { state = state.copy(importLog = state.importLog + message) } }
             }.onSuccess { status ->
                 val channels = store.getChannels(); val programs = store.getPrograms()
-                state = state.copy(loading = false, channels = channels, programs = programs, status = status, selectedChannelId = channels.firstOrNull()?.id, importLog = state.importLog + "Setup complete", importFinished = true)
+                state = state.copy(loading = false, channels = channels, programs = programs, programIndex = ProgramIndex(programs), status = status, selectedChannelId = channels.firstOrNull()?.id, importLog = state.importLog + "Setup complete", importFinished = true)
             }.onFailure { error ->
                 val message = error.message ?: "The provider could not be loaded"
                 state = state.copy(loading = false, error = message, status = state.status.copy(running = false, message = message), importLog = state.importLog + "ERROR: $message", importFinished = false)
@@ -172,7 +232,11 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         state = state.copy(loading = true, error = null, status = state.status.copy(running = true, message = "Updating playlist and EPG…"))
         viewModelScope.launch {
             runCatching { repository.refreshAll() }
-                .onSuccess { status -> state = state.copy(loading = false, channels = store.getChannels(), programs = store.getPrograms(), status = status, selectedChannelId = state.selectedChannelId ?: store.getChannels().firstOrNull()?.id) }
+                .onSuccess { status ->
+                    val channels = store.getChannels()
+                    val programs = store.getPrograms()
+                    state = state.copy(loading = false, channels = channels, programs = programs, programIndex = ProgramIndex(programs), status = status, selectedChannelId = state.selectedChannelId ?: channels.firstOrNull()?.id)
+                }
                 .onFailure { error -> state = state.copy(loading = false, error = error.message ?: "Refresh failed", status = state.status.copy(running = false, message = error.message ?: "Refresh failed")) }
         }
     }
@@ -183,9 +247,11 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         viewModelScope.launch {
             runCatching { repository.refreshEpg() }
                 .onSuccess { count ->
+                    val programs = store.getPrograms()
                     state = state.copy(
                         loading = false,
-                        programs = store.getPrograms(),
+                        programs = programs,
+                        programIndex = ProgramIndex(programs),
                         status = state.status.copy(running = false, lastSuccessEpochMs = store.lastRefresh(), message = "Updated $count guide programmes", programCount = count)
                     )
                 }

@@ -46,7 +46,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -93,49 +92,116 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun StreamGuideRoot(vm: MainViewModel) {
     val state = vm.state
+    BackHandler(enabled = state.overlayMenu != OverlayMenu.NONE) { vm.closeOverlayMenu() }
     Surface(Modifier.fillMaxSize(), color = Bg) {
-        when (state.screen) {
-            AppScreen.SETUP -> SetupScreen(null, vm::saveProvider)
-            AppScreen.EDIT_PROVIDER -> SetupScreen(state.provider, vm::saveProvider)
-            AppScreen.IMPORT_STATUS -> ImportStatusScreen(state, vm)
-            AppScreen.PLAYER -> PlayerScreen(state, vm)
-            else -> Column {
-                AppTopBar(state, vm)
-                when (state.screen) {
-                    AppScreen.GUIDE -> GuideScreen(state, vm)
-                    AppScreen.SEARCH -> SearchScreen(state, vm)
-                    AppScreen.MULTIVIEW -> MultiviewScreen(state, vm)
-                    AppScreen.SETTINGS -> SettingsScreen(state, vm)
-                    AppScreen.ORGANIZE -> OrganizeScreen(state, vm)
-                    else -> Unit
+        Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            event.nativeKeyEvent.action == KeyEvent.ACTION_UP &&
+                event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_MENU &&
+                vm.onRemoteOptionsPressed()
+        }) {
+            when (state.screen) {
+                AppScreen.SETUP -> SetupScreen(null, vm::saveProvider)
+                AppScreen.EDIT_PROVIDER -> SetupScreen(state.provider, vm::saveProvider)
+                AppScreen.IMPORT_STATUS -> ImportStatusScreen(state, vm)
+                AppScreen.PLAYER -> PlayerScreen(state, vm)
+                else -> Column {
+                    AppHeader(state, vm)
+                    when (state.screen) {
+                        AppScreen.GUIDE -> GuideScreen(state, vm)
+                        AppScreen.SEARCH -> SearchScreen(state, vm)
+                        AppScreen.MULTIVIEW -> MultiviewScreen(state, vm)
+                        AppScreen.SETTINGS -> SettingsScreen(state, vm)
+                        AppScreen.ORGANIZE -> OrganizeScreen(state, vm)
+                        else -> Unit
+                    }
                 }
             }
+            when (state.overlayMenu) {
+                OverlayMenu.APP -> AppNavigationMenu(state, vm)
+                OverlayMenu.CHANNEL -> ChannelActionsMenu(state, vm)
+                OverlayMenu.NONE -> Unit
+            }
+            state.pendingPinChannelId?.let { ParentalPinDialog(vm::submitParentalPin, vm::cancelParentalPin) }
+            if (state.screen != AppScreen.IMPORT_STATUS) state.error?.let { ErrorBanner(it, vm::clearError) }
         }
-        state.pendingPinChannelId?.let { ParentalPinDialog(vm::submitParentalPin, vm::cancelParentalPin) }
-        if (state.screen != AppScreen.IMPORT_STATUS) state.error?.let { ErrorBanner(it, vm::clearError) }
     }
 }
 
-@Composable private fun AppTopBar(state: UiState, vm: MainViewModel) {
+@Composable private fun AppHeader(state: UiState, vm: MainViewModel) {
+    val title = when (state.screen) {
+        AppScreen.GUIDE -> "Live TV"
+        AppScreen.SEARCH -> "Search"
+        AppScreen.MULTIVIEW -> "Multiview"
+        AppScreen.SETTINGS -> "Settings"
+        AppScreen.ORGANIZE -> "Manage channels"
+        else -> "StreamGuide"
+    }
     Row(
-        Modifier.fillMaxWidth().height(76.dp).background(Color(0xF20B0F14)).padding(horizontal = 28.dp),
+        Modifier.fillMaxWidth().height(68.dp).background(Color(0xF20B0F14)).padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(34.dp).clip(RoundedCornerShape(7.dp)).background(Focus), contentAlignment = Alignment.Center) { Icon(Icons.Default.PlayArrow, null, tint = Color.White) }
-        Spacer(Modifier.width(12.dp)); Text("StreamGuide", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(38.dp))
-        NavButton("Live TV", Icons.Default.LiveTv, state.screen == AppScreen.GUIDE) { vm.navigate(AppScreen.GUIDE) }
-        NavButton("Search", Icons.Default.Search, state.screen == AppScreen.SEARCH) { vm.navigate(AppScreen.SEARCH) }
-        NavButton("Multiview", Icons.Default.GridView, state.screen == AppScreen.MULTIVIEW) { vm.navigate(AppScreen.MULTIVIEW) }
-        NavButton("Settings", Icons.Default.Settings, state.screen == AppScreen.SETTINGS || state.screen == AppScreen.ORGANIZE) { vm.navigate(AppScreen.SETTINGS) }
+        TvButton(vm::toggleAppMenu, selected = state.overlayMenu == OverlayMenu.APP) {
+            Icon(Icons.Default.Menu, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Menu")
+        }
+        Spacer(Modifier.width(18.dp)); Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
-        if (state.loading) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(12.dp)); Text("Updating", color = TextMuted, fontSize = 14.sp) }
-        Spacer(Modifier.width(22.dp)); Clock()
+        if (state.loading) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Updating", color = TextMuted, fontSize = 13.sp); Spacer(Modifier.width(18.dp)) }
+        if (state.screen == AppScreen.GUIDE) {
+            TvButton(vm::toggleChannelMenu, selected = state.overlayMenu == OverlayMenu.CHANNEL) {
+                Icon(Icons.Default.MoreVert, null, Modifier.size(20.dp)); Spacer(Modifier.width(7.dp)); Text("Channel options")
+            }
+            Spacer(Modifier.width(18.dp))
+        }
+        Clock()
     }
 }
 
-@Composable private fun NavButton(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
-    TvButton(onClick, selected = selected, modifier = Modifier.padding(end = 8.dp), onFocus = onClick) { Icon(icon, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(label) }
+@Composable private fun AppNavigationMenu(state: UiState, vm: MainViewModel) {
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { firstFocus.requestFocus() }
+    OverlayMenuPanel(Alignment.CenterStart, "STREAMGUIDE", Modifier.width(310.dp)) {
+        MenuDestination("Live TV", Icons.Default.LiveTv, selected = state.screen == AppScreen.GUIDE, modifier = Modifier.focusRequester(firstFocus)) { vm.navigate(AppScreen.GUIDE) }
+        MenuDestination("Search", Icons.Default.Search, selected = state.screen == AppScreen.SEARCH) { vm.navigate(AppScreen.SEARCH) }
+        MenuDestination("Multiview", Icons.Default.GridView, selected = state.screen == AppScreen.MULTIVIEW) { vm.navigate(AppScreen.MULTIVIEW) }
+        MenuDestination("Settings", Icons.Default.Settings, selected = state.screen == AppScreen.SETTINGS || state.screen == AppScreen.ORGANIZE) { vm.navigate(AppScreen.SETTINGS) }
+    }
+}
+
+@Composable private fun ChannelActionsMenu(state: UiState, vm: MainViewModel) {
+    val channel = state.selectedChannelId?.let { id -> state.channels.firstOrNull { it.id == id } }
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(channel?.id) { if (channel != null) firstFocus.requestFocus() }
+    OverlayMenuPanel(Alignment.CenterEnd, "CHANNEL OPTIONS", Modifier.width(350.dp)) {
+        if (channel == null) {
+            Text("Select a channel first", color = TextMuted, modifier = Modifier.padding(12.dp))
+        } else {
+            Text(channel.displayName, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(10.dp))
+            MenuDestination(if (channel.favorite) "Remove favorite" else "Add favorite", if (channel.favorite) Icons.Default.Star else Icons.Default.StarBorder, modifier = Modifier.focusRequester(firstFocus)) { vm.toggleFavorite(channel.id); vm.closeOverlayMenu() }
+            MenuDestination("Move up", Icons.Default.KeyboardArrowUp) { vm.moveChannel(channel.id, -1); vm.closeOverlayMenu() }
+            MenuDestination("Move down", Icons.Default.KeyboardArrowDown) { vm.moveChannel(channel.id, 1); vm.closeOverlayMenu() }
+            MenuDestination(if (channel.locked) "Unlock channel" else "Lock channel", if (channel.locked) Icons.Default.LockOpen else Icons.Default.Lock) { vm.toggleLock(channel.id); vm.closeOverlayMenu() }
+            MenuDestination("Add to Multiview", Icons.Default.GridView) { vm.addToMultiview(channel.id) }
+            HorizontalDivider(color = Color(0xFF27303C), modifier = Modifier.padding(vertical = 6.dp))
+            MenuDestination("Guide width: ${state.timelineHours} hours", Icons.Default.ZoomOutMap) { vm.cycleTimelineZoom(); vm.closeOverlayMenu() }
+            MenuDestination("Update playlist and EPG", Icons.Default.Refresh) { vm.closeOverlayMenu(); vm.refresh() }
+        }
+    }
+}
+
+@Composable private fun OverlayMenuPanel(alignment: Alignment, title: String, modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = alignment) {
+        Column(modifier.fillMaxHeight().background(Panel).padding(horizontal = 18.dp, vertical = 28.dp)) {
+            Text(title, color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
+            Spacer(Modifier.height(8.dp)); content()
+            Spacer(Modifier.weight(1f)); Text("Back closes this menu", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(10.dp))
+        }
+    }
+}
+
+@Composable private fun MenuDestination(label: String, icon: ImageVector, modifier: Modifier = Modifier, selected: Boolean = false, onClick: () -> Unit) {
+    TvButton(onClick, selected = selected, modifier = modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(12.dp)); Text(label, Modifier.weight(1f))
+    }
 }
 
 @Composable private fun Clock() {
@@ -152,20 +218,21 @@ class MainActivity : ComponentActivity() {
         GroupRail(state, vm)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            GuideToolbar(state, vm)
+            GuideToolbar(state)
             Spacer(Modifier.height(10.dp))
             GuideHeader(state.timelineStart, state.timelineHours, vm)
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 items(state.visibleChannels, key = { it.id }) { channel ->
-                    TimelineChannelRow(channel, state.programs, state.timelineStart, state.timelineHours, channel.id == state.selectedChannelId, vm)
+                    TimelineChannelRow(channel, state.programsFor(channel), state.timelineStart, state.timelineHours, channel.id == state.selectedChannelId, vm)
                 }
                 if (state.visibleChannels.isEmpty()) item { EmptyGuide(state.provider != null, vm::refresh) }
             }
             state.selectedChannelId?.let { id ->
                 state.channels.firstOrNull { it.id == id }?.let { channel ->
+                    val channelPrograms = state.programsFor(channel)
                     val selected = state.selectedProgram?.takeIf { it.channelId == channel.id || it.channelId == channel.tvgId }
                     if (selected != null) ProgrammeDetailsBar(channel, selected, vm)
-                    else SelectedChannelBar(channel, currentAndNext(channel, state.programs).firstOrNull(), lastCatchup(channel, state.programs), vm)
+                    else SelectedChannelBar(channel, currentAndNext(channel, channelPrograms).firstOrNull(), lastCatchup(channel, channelPrograms), vm)
                 }
             }
         }
@@ -177,7 +244,7 @@ class MainActivity : ComponentActivity() {
         Text(state.provider?.name ?: "PLAYLIST", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(state.groups) { group ->
-                val count = when(group) { "All channels" -> state.channels.count { !it.hidden }; "Favorites" -> state.channels.count { it.favorite && !it.hidden }; else -> state.channels.count { it.displayGroup == group && !it.hidden } }
+                val count = state.channelCountForGroup(group)
                 TvButton({ vm.selectGroup(group) }, selected = state.selectedGroup == group, modifier = Modifier.fillMaxWidth()) {
                     Icon(if(group=="Favorites") Icons.Default.Star else Icons.Default.Folder, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
                 }
@@ -186,13 +253,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun GuideToolbar(state: UiState, vm: MainViewModel) {
+@Composable private fun GuideToolbar(state: UiState) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column { Text(state.selectedGroup, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${state.visibleChannels.size} channels", color = TextMuted, fontSize = 13.sp) }
         Spacer(Modifier.weight(1f))
-        TvButton(vm::cycleTimelineZoom) { Icon(Icons.Default.ZoomOutMap,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("${state.timelineHours}h") }
-        Spacer(Modifier.width(8.dp)); TvButton({ vm.setSort(when(state.sort){ChannelSort.MANUAL->ChannelSort.ALPHABETICAL;ChannelSort.ALPHABETICAL->ChannelSort.PROVIDER;ChannelSort.PROVIDER->ChannelSort.MANUAL}) }) { Icon(Icons.AutoMirrored.Filled.Sort,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(state.sort.name.lowercase().replaceFirstChar(Char::uppercase)) }
-        Spacer(Modifier.width(8.dp)); TvButton(vm::refresh) { Icon(Icons.Default.Refresh,null,Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Update") }
+        Text("Press the remote Options button for channel actions", color = TextMuted, fontSize = 12.sp)
     }
 }
 
@@ -329,13 +394,8 @@ class MainActivity : ComponentActivity() {
 @Composable private fun SelectedChannelBar(channel: Channel, program: Program?, previous: Program?, vm: MainViewModel) {
     Row(Modifier.fillMaxWidth().height(72.dp).padding(top=8.dp).clip(RoundedCornerShape(9.dp)).background(Panel2).padding(horizontal=16.dp), verticalAlignment=Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(program?.title ?: channel.displayName, fontWeight=FontWeight.SemiBold, maxLines=1); Text(program?.description?.ifBlank { channel.displayGroup } ?: channel.displayGroup, color=TextMuted, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=12.sp) }
-        TvButton({vm.toggleFavorite(channel.id)}) { Icon(if(channel.favorite) Icons.Default.Star else Icons.Default.StarBorder,null,tint=if(channel.favorite) Warning else TextPrimary); Spacer(Modifier.width(6.dp)); Text("Favorite") }
-        Spacer(Modifier.width(6.dp)); TvButton({vm.moveChannel(channel.id,-1)}) { Icon(Icons.Default.KeyboardArrowUp,null); Text("Move") }
-        Spacer(Modifier.width(6.dp)); TvButton({vm.moveChannel(channel.id,1)}) { Icon(Icons.Default.KeyboardArrowDown,null) }
-        if(previous != null && channel.catchupSource.isNotBlank()) { Spacer(Modifier.width(6.dp)); TvButton({vm.playCatchup(channel,previous)}) { Icon(Icons.Default.Replay,null); Spacer(Modifier.width(4.dp)); Text("Catch-up") } }
-        Spacer(Modifier.width(6.dp)); TvButton({vm.toggleLock(channel.id)}) { Icon(if(channel.locked) Icons.Default.Lock else Icons.Default.LockOpen,null); Spacer(Modifier.width(4.dp)); Text(if(channel.locked) "Locked" else "Lock") }
-        Spacer(Modifier.width(6.dp)); TvButton({vm.addToMultiview(channel.id)}) { Icon(Icons.Default.GridView,null); Spacer(Modifier.width(4.dp)); Text("Multi") }
-        Spacer(Modifier.width(6.dp)); TvButton({vm.play(channel.id)}, selected=true) { Icon(Icons.Default.PlayArrow,null); Spacer(Modifier.width(4.dp)); Text("Watch") }
+        if(previous != null && channel.catchupSource.isNotBlank()) { TvButton({vm.playCatchup(channel,previous)}) { Icon(Icons.Default.Replay,null); Spacer(Modifier.width(4.dp)); Text("Catch-up") }; Spacer(Modifier.width(6.dp)) }
+        TvButton({vm.play(channel.id)}, selected=true) { Icon(Icons.Default.PlayArrow,null); Spacer(Modifier.width(4.dp)); Text("Watch") }
     }
 }
 
@@ -344,7 +404,7 @@ class MainActivity : ComponentActivity() {
         Text("Search", fontSize=28.sp, fontWeight=FontWeight.SemiBold); Spacer(Modifier.height(16.dp))
         TvTextField(state.query, vm::setQuery, Modifier.fillMaxWidth(), placeholder={Text("Channels and programmes")}, leadingIcon={Icon(Icons.Default.Search,null)})
         Spacer(Modifier.height(18.dp)); Text("${state.visibleChannels.size} results", color=TextMuted)
-        Spacer(Modifier.height(10.dp)); LazyColumn(verticalArrangement=Arrangement.spacedBy(6.dp)) { items(state.visibleChannels,key={it.id}) { channel -> GuideChannelRow(channel,currentAndNext(channel,state.programs),false,vm) } }
+        Spacer(Modifier.height(10.dp)); LazyColumn(verticalArrangement=Arrangement.spacedBy(6.dp)) { items(state.visibleChannels,key={it.id}) { channel -> GuideChannelRow(channel,currentAndNext(channel,state.programsFor(channel)),false,vm) } }
     }
 }
 
@@ -443,29 +503,80 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun SettingsScreen(state: UiState, vm: MainViewModel) {
-    var parentalPin by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(horizontal=42.dp,vertical=24.dp)) {
-        Text("Settings", fontSize=28.sp,fontWeight=FontWeight.SemiBold); Text("Playlist, guide and app preferences",color=TextMuted); Spacer(Modifier.height(22.dp))
-        SettingsCard("PLAYLIST") {
-            SettingRow(Icons.AutoMirrored.Filled.PlaylistPlay, state.provider?.name ?: "No playlist", when(state.provider?.type){ProviderType.XTREAM->"Xtream Codes · edit connection";ProviderType.M3U->"M3U / M3U8 · edit connection";else->""}) { vm.navigate(AppScreen.EDIT_PROVIDER) }
-            HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Tune,"Manage channels","Reorder, move to position, hide and restore") { vm.navigate(AppScreen.ORGANIZE) }
-            HorizontalDivider(color=Color(0xFF27303C)); SettingRow(Icons.Default.Refresh,"Update playlist and EPG",state.status.message,vm::refresh)
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp, vertical = 22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item {
+            Text("Use Up/Down to choose a setting, then press Select to change it.", color = TextMuted, fontSize = 13.sp)
         }
-        Spacer(Modifier.height(16.dp)); SettingsCard("TV GUIDE") {
-            Column(Modifier.padding(16.dp)) { Text("Automatic update interval",fontWeight=FontWeight.Medium); Text("Default is every 24 hours. Fire OS may run background work later to preserve battery.",color=TextMuted,fontSize=13.sp); Spacer(Modifier.height(12.dp)); Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){ AppSettings.allowedEpgHours.sorted().forEach{h->TvButton({vm.setEpgHours(h)},selected=state.epgHours==h){Text("${h}h")}} } }
+        item {
+            SettingsCard("TV GUIDE UPDATES") {
+                SettingToggleRow(
+                    Icons.Default.Update,
+                    "Automatic EPG updates",
+                    "Allow periodic guide updates in the background",
+                    state.epgAutoUpdate
+                ) { vm.setEpgAutoUpdate(!state.epgAutoUpdate) }
+                HorizontalDivider(color = Color(0xFF27303C))
+                SettingToggleRow(
+                    Icons.Default.PowerSettingsNew,
+                    "Update EPG when StreamGuide opens",
+                    "Refresh the guide on launch when its data is stale",
+                    state.updateEpgOnStart
+                ) { vm.setUpdateEpgOnStart(!state.updateEpgOnStart) }
+                HorizontalDivider(color = Color(0xFF27303C))
+                Column(Modifier.padding(16.dp)) {
+                    Text("Automatic update interval", fontWeight = FontWeight.Medium)
+                    Text("Fire OS schedules background work approximately; it may run later to preserve resources.", color = TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AppSettings.allowedEpgHours.sorted().forEach { hours ->
+                            TvButton({ vm.setEpgHours(hours) }, selected = state.epgHours == hours) { Text("Every ${hours}h") }
+                        }
+                    }
+                }
+                HorizontalDivider(color = Color(0xFF27303C))
+                SettingRow(Icons.Default.Refresh, "Update EPG now", "Guide only · keeps the current channel list", vm::refreshEpgOnly)
+            }
         }
-        Spacer(Modifier.height(16.dp)); SettingsCard("PARENTAL CONTROLS") {
-            Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(state.hasParentalPin) "Change parental PIN" else "Set parental PIN",fontWeight=FontWeight.Medium);Text("Lock individual channels from the guide",color=TextMuted,fontSize=13.sp)};TvTextField(parentalPin,{parentalPin=it.filter(Char::isDigit).take(12)},Modifier.width(180.dp),placeholder={Text("4–12 digits")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation());Spacer(Modifier.width(8.dp));TvButton({vm.setParentalPin(parentalPin);parentalPin=""},selected=true){Icon(Icons.Default.Lock,null);Spacer(Modifier.width(5.dp));Text("Save")}}
+        item {
+            SettingsCard("PLAYLIST") {
+                SettingRow(
+                    Icons.AutoMirrored.Filled.PlaylistPlay,
+                    state.provider?.name ?: "No playlist",
+                    when (state.provider?.type) { ProviderType.XTREAM -> "Xtream Codes · edit connection"; ProviderType.M3U -> "M3U / M3U8 · edit connection"; else -> "" }
+                ) { vm.navigate(AppScreen.EDIT_PROVIDER) }
+                HorizontalDivider(color = Color(0xFF27303C))
+                SettingToggleRow(
+                    Icons.Default.PowerSettingsNew,
+                    "Update playlist when StreamGuide opens",
+                    "Slower startup; reloads channels and EPG from the provider",
+                    state.updatePlaylistOnStart
+                ) { vm.setUpdatePlaylistOnStart(!state.updatePlaylistOnStart) }
+                HorizontalDivider(color = Color(0xFF27303C))
+                SettingRow(Icons.Default.Refresh, "Update playlist and EPG now", state.status.message, vm::refresh)
+                HorizontalDivider(color = Color(0xFF27303C))
+                SettingRow(Icons.Default.Tune, "Manage channels", "Reorder, rename, group, hide and restore") { vm.navigate(AppScreen.ORGANIZE) }
+            }
         }
-        Spacer(Modifier.height(16.dp)); SettingsCard("STATUS") {
-            Column(Modifier.padding(16.dp)) { StatusLine("Channels",state.channels.size.toString());StatusLine("Programmes",state.programs.size.toString());StatusLine("Last successful update",if(state.status.lastSuccessEpochMs>0) SimpleDateFormat("d MMM, HH:mm",Locale.getDefault()).format(Date(state.status.lastSuccessEpochMs)) else "Never") }
+        item {
+            SettingsCard("STATUS") {
+                Column(Modifier.padding(16.dp)) {
+                    StatusLine("Channels", state.channels.size.toString())
+                    StatusLine("Programmes", state.programs.size.toString())
+                    StatusLine("EPG automatic update", if (state.epgAutoUpdate) "On · every ${state.epgHours}h" else "Off")
+                    StatusLine("Last successful update", if (state.status.lastSuccessEpochMs > 0) SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(state.status.lastSuccessEpochMs)) else "Never")
+                }
+            }
         }
-        Spacer(Modifier.weight(1f)); TvButton(vm::clearProvider,danger=true){Icon(Icons.Default.Delete,null);Spacer(Modifier.width(7.dp));Text("Remove playlist and local data")}
+        item {
+            TvButton(vm::clearProvider, danger = true) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(7.dp)); Text("Remove playlist and local data") }
+            Spacer(Modifier.height(12.dp))
+        }
     }
 }
 
 @Composable private fun SettingsCard(title:String,content:@Composable ColumnScope.()->Unit){Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Panel)){Text(title,color=TextMuted,fontSize=11.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=16.dp,top=12.dp,bottom=6.dp));content()}}
-@Composable private fun SettingRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit){TvButton(onClick,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=1)}}}
+@Composable private fun SettingRow(icon:ImageVector,title:String,subtitle:String,onClick:()->Unit){TvButton(onClick,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis)}}}
+@Composable private fun SettingToggleRow(icon:ImageVector,title:String,subtitle:String,enabled:Boolean,onToggle:()->Unit){TvButton(onToggle,selected=enabled,modifier=Modifier.fillMaxWidth()){Icon(icon,null);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(title);Text(subtitle,color=TextMuted,fontSize=12.sp,maxLines=2)};Text(if(enabled) "ON" else "OFF",color=if(enabled) Success else TextMuted,fontWeight=FontWeight.Bold)}}
 @Composable private fun StatusLine(label:String,value:String){Row(Modifier.fillMaxWidth().padding(vertical=5.dp)){Text(label,color=TextMuted);Spacer(Modifier.weight(1f));Text(value,fontWeight=FontWeight.Medium)}}
 
 @Composable private fun ImportStatusScreen(state: UiState, vm: MainViewModel) {
@@ -626,7 +737,7 @@ private fun TvTextField(
                     Spacer(Modifier.width(14.dp)); Column { Text(channel.displayName, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Text("${channel.displayGroup} · $playbackInfo", color = TextMuted) }
                 }
                 Spacer(Modifier.weight(1f))
-                val current = currentAndNext(channel, state.programs).firstOrNull()
+                val current = currentAndNext(channel, state.programsFor(channel)).firstOrNull()
                 Text(current?.title ?: "Live TV", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
                 Text(current?.description.orEmpty(), color = TextMuted, maxLines = 2)
                 Spacer(Modifier.height(14.dp))
@@ -676,7 +787,6 @@ private fun TvButton(
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     danger: Boolean = false,
-    onFocus: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -688,7 +798,7 @@ private fun TvButton(
         else -> Panel2
     }
     Surface(
-        modifier.scale(focusScale).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }.focusable().combinedClickable(onClick = onClick),
+        modifier.scale(focusScale).onFocusChanged { focused = it.isFocused }.focusable().combinedClickable(onClick = onClick),
         shape = RoundedCornerShape(7.dp),
         color = bg,
         border = if (focused) BorderStroke(2.dp, Color.White) else null
