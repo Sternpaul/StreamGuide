@@ -8,6 +8,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sternpaul.streamguide.core.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -62,6 +64,8 @@ data class UiState(
     val updateEpgOnStart: Boolean = true,
     val updatePlaylistOnStart: Boolean = false,
     val query: String = "",
+    val programSearchChannelIds: Set<String> = emptySet(),
+    val programsLoadedFor: Set<String> = emptySet(),
     val multiviewIds: List<String> = emptyList(),
     val hasParentalPin: Boolean = false,
     val pendingPinChannelId: String? = null,
@@ -102,6 +106,7 @@ data class UiState(
         }.filter { channel ->
             normalizedQuery.isBlank() ||
                 channel.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                listOf(channel.id, channel.tvgId).any { it.isNotBlank() && it in programSearchChannelIds } ||
                 programIndex.containsTitle(channel, normalizedQuery)
         }.toList()
         when (sort) {
@@ -117,10 +122,15 @@ data class UiState(
 class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     private val store = app.container.store
     private val repository = app.container.repository
+    private var searchJob: Job? = null
     var state by mutableStateOf(loadState())
         private set
 
     init {
+        viewModelScope.launch {
+            val count = withContext(Dispatchers.IO) { store.programCount() }
+            state = state.copy(status = state.status.copy(programCount = count))
+        }
         val action = RefreshPolicy.onAppStart(
             hasProvider = state.provider != null,
             playlistOnStart = state.updatePlaylistOnStart,
@@ -135,16 +145,16 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     }
 
     private fun loadState(): UiState {
-        val provider = store.getProvider(); val channels = store.getChannels(); val programs = store.getPrograms()
+        val provider = store.getProvider(); val channels = store.getChannels()
         return UiState(
             screen = if (provider == null) AppScreen.SETUP else AppScreen.GUIDE,
-            provider = provider, channels = channels, programs = programs,
+            provider = provider, channels = channels,
             selectedChannelId = channels.firstOrNull()?.id,
             groupOrder = store.groupOrder(),
             timelineHours = store.timelineHours(),
             epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updateEpgOnStart = store.updateEpgOnStart(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
-            status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, programs.size)
+            status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
         )
     }
 
@@ -163,8 +173,31 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun closeOverlayMenu() { state = state.copy(overlayMenu = OverlayMenu.NONE) }
     fun focusGroup(group: String) { state = state.copy(focusedGroup = group, optionsContext = OptionsContext.GROUP) }
     fun selectGroup(group: String) { state = state.copy(selectedGroup = group, focusedGroup = group, optionsContext = OptionsContext.GROUP, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.displayGroup == group }?.id) }
-    fun selectChannel(id: String) { state = state.copy(selectedChannelId = id, optionsContext = OptionsContext.CHANNEL) }
-    fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program, optionsContext = OptionsContext.CHANNEL) }
+    fun selectChannel(id: String) { state = state.copy(selectedChannelId = id, optionsContext = OptionsContext.CHANNEL); ensurePrograms(id) }
+    fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program, optionsContext = OptionsContext.CHANNEL); ensurePrograms(channelId) }
+    fun ensurePrograms(channelId: String) {
+        if (channelId in state.programsLoadedFor) return
+        val channel = state.channels.firstOrNull { it.id == channelId } ?: return
+        if (state.programsLoadedFor.size >= 300) {
+            state = state.copy(programs = emptyList(), programIndex = ProgramIndex(emptyList()), programsLoadedFor = emptySet())
+        }
+        state = state.copy(programsLoadedFor = state.programsLoadedFor + channelId)
+        val timelineStart = state.timelineStart
+        val timelineEnd = timelineStart + state.timelineHours * 3_600_000L
+        val now = System.currentTimeMillis()
+        val start = minOf(timelineStart - 3_600_000L, now - 2 * 3_600_000L)
+        val end = maxOf(timelineEnd + 3_600_000L, now + 6 * 3_600_000L)
+        viewModelScope.launch {
+            val programs = withContext(Dispatchers.IO) { store.getPrograms(listOf(channel.id, channel.tvgId), start, end, 2_000) }
+            if (channelId !in state.programsLoadedFor) return@launch
+            val ids = setOf(channel.id, channel.tvgId).filter(String::isNotBlank).toSet()
+            val merged = state.programs.filterNot { it.channelId in ids } + programs
+            state = state.copy(programs = merged, programIndex = ProgramIndex(merged))
+        }
+    }
+    private fun resetLoadedPrograms() {
+        state = state.copy(programs = emptyList(), programIndex = ProgramIndex(emptyList()), programsLoadedFor = emptySet())
+    }
     fun moveFocusedGroupToTop() = updateFocusedGroupOrder { current, group -> GroupOrdering.moveToTop(current, group) }
     fun moveFocusedGroup(delta: Int) = updateFocusedGroupOrder { current, group -> GroupOrdering.move(current, group, delta) }
     private fun updateFocusedGroupOrder(change: (List<String>, String) -> List<String>) {
@@ -175,9 +208,19 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         store.saveGroupOrder(order)
         state = state.copy(groupOrder = order, overlayMenu = OverlayMenu.NONE)
     }
-    fun shiftTimeline(hours: Int) { state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null) }
-    fun jumpTimelineToNow() { state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null) }
-    fun setTimelineHours(hours: Int) { store.setTimelineHours(hours); state = state.copy(timelineHours = hours) }
+    fun shiftTimeline(hours: Int) {
+        state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null)
+        resetLoadedPrograms()
+    }
+    fun jumpTimelineToNow() {
+        state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null)
+        resetLoadedPrograms()
+    }
+    fun setTimelineHours(hours: Int) {
+        store.setTimelineHours(hours)
+        state = state.copy(timelineHours = hours)
+        resetLoadedPrograms()
+    }
     fun play(id: String) {
         val channel = state.channels.firstOrNull { it.id == id } ?: return
         if (channel.locked && state.hasParentalPin) {
@@ -220,7 +263,16 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         state = state.copy(multiviewIds = ids, screen = AppScreen.MULTIVIEW)
     }
     fun removeFromMultiview(id: String) { val ids = state.multiviewIds - id; store.saveMultiviewChannelIds(ids); state = state.copy(multiviewIds = ids) }
-    fun setQuery(value: String) { state = state.copy(query = value) }
+    fun setQuery(value: String) {
+        state = state.copy(query = value, programSearchChannelIds = emptySet())
+        searchJob?.cancel()
+        if (value.isBlank()) return
+        searchJob = viewModelScope.launch {
+            delay(150)
+            val ids = withContext(Dispatchers.IO) { store.searchProgramChannelIds(value) }
+            if (state.query == value) state = state.copy(programSearchChannelIds = ids)
+        }
+    }
     fun setSort(sort: ChannelSort) { state = state.copy(sort = sort) }
     fun clearError() { state = state.copy(error = null) }
 
@@ -232,8 +284,18 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             runCatching {
                 repository.refreshAll { message -> withContext(Dispatchers.Main) { state = state.copy(importLog = state.importLog + message) } }
             }.onSuccess { status ->
-                val channels = store.getChannels(); val programs = store.getPrograms()
-                state = state.copy(loading = false, channels = channels, programs = programs, programIndex = ProgramIndex(programs), status = status, selectedChannelId = channels.firstOrNull()?.id, importLog = state.importLog + "Setup complete", importFinished = true)
+                val channels = withContext(Dispatchers.IO) { store.getChannels() }
+                state = state.copy(
+                    loading = false,
+                    channels = channels,
+                    programs = emptyList(),
+                    programIndex = ProgramIndex(emptyList()),
+                    programsLoadedFor = emptySet(),
+                    status = status,
+                    selectedChannelId = channels.firstOrNull()?.id,
+                    importLog = state.importLog + "Setup complete",
+                    importFinished = true
+                )
             }.onFailure { error ->
                 val message = error.message ?: "The provider could not be loaded"
                 state = state.copy(loading = false, error = message, status = state.status.copy(running = false, message = message), importLog = state.importLog + "ERROR: $message", importFinished = false)
@@ -251,9 +313,16 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         viewModelScope.launch {
             runCatching { repository.refreshAll() }
                 .onSuccess { status ->
-                    val channels = store.getChannels()
-                    val programs = store.getPrograms()
-                    state = state.copy(loading = false, channels = channels, programs = programs, programIndex = ProgramIndex(programs), status = status, selectedChannelId = state.selectedChannelId ?: channels.firstOrNull()?.id)
+                    val channels = withContext(Dispatchers.IO) { store.getChannels() }
+                    state = state.copy(
+                        loading = false,
+                        channels = channels,
+                        programs = emptyList(),
+                        programIndex = ProgramIndex(emptyList()),
+                        programsLoadedFor = emptySet(),
+                        status = status,
+                        selectedChannelId = state.selectedChannelId ?: channels.firstOrNull()?.id
+                    )
                 }
                 .onFailure { error -> state = state.copy(loading = false, error = error.message ?: "Refresh failed", status = state.status.copy(running = false, message = error.message ?: "Refresh failed")) }
         }
@@ -265,11 +334,11 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         viewModelScope.launch {
             runCatching { repository.refreshEpg() }
                 .onSuccess { count ->
-                    val programs = store.getPrograms()
                     state = state.copy(
                         loading = false,
-                        programs = programs,
-                        programIndex = ProgramIndex(programs),
+                        programs = emptyList(),
+                        programIndex = ProgramIndex(emptyList()),
+                        programsLoadedFor = emptySet(),
                         status = state.status.copy(running = false, lastSuccessEpochMs = store.lastRefresh(), message = "Updated $count guide programmes", programCount = count)
                     )
                 }

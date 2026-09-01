@@ -21,13 +21,26 @@ class PlaylistRepository(private val store: AppStore) {
             onProgress("Found ${parsed.size} live channels")
             val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
             onProgress("Downloading TV guide")
-            val epg = runCatching { refreshEpgInternal(provider) }.getOrElse { error -> onProgress("Guide unavailable: ${error.message}. Keeping the previous guide."); store.getPrograms() }
-            onProgress("Found ${epg.size} guide programmes")
+            var epgWarning: String? = null
+            val epgCount = runCatching {
+                refreshEpgInternal(provider) ?: store.programCount()
+            }.getOrElse { error ->
+                epgWarning = "TV guide update failed: ${error.message?.take(140) ?: "unknown error"}. Previous guide kept."
+                onProgress(epgWarning!!)
+                store.programCount()
+            }
+            onProgress("Found $epgCount guide programmes")
             onProgress("Saving channels and guide")
             store.saveChannels(reconciled)
-            store.savePrograms(epg)
-            store.setLastRefresh(System.currentTimeMillis()); store.setLastError("")
-            RefreshStatus(false, store.lastRefresh(), "Updated successfully", reconciled.size, epg.size)
+            store.setLastRefresh(System.currentTimeMillis())
+            store.setLastError(epgWarning.orEmpty())
+            RefreshStatus(
+                false,
+                store.lastRefresh(),
+                epgWarning ?: "Updated successfully",
+                reconciled.size,
+                epgCount
+            )
         } catch (e: Exception) {
             val message = e.message?.take(180) ?: "Refresh failed"
             store.setLastError(message)
@@ -37,19 +50,22 @@ class PlaylistRepository(private val store: AppStore) {
 
     suspend fun refreshEpg(): Int = withContext(Dispatchers.IO) {
         val provider = store.getProvider() ?: return@withContext 0
-        val programs = refreshEpgInternal(provider)
-        store.savePrograms(programs); store.setLastRefresh(System.currentTimeMillis()); programs.size
+        val count = refreshEpgInternal(provider) ?: return@withContext store.programCount()
+        store.setLastRefresh(System.currentTimeMillis())
+        count
     }
 
-    private fun refreshEpgInternal(provider: ProviderConfig): List<Program> {
-        val url = ProviderEndpoints.epg(provider).ifBlank { return store.getPrograms() }
+    private fun refreshEpgInternal(provider: ProviderConfig): Int? {
+        val url = ProviderEndpoints.epg(provider).ifBlank { return null }
         val response = client.newCall(request(provider, url)).execute()
         response.use {
             if (!it.isSuccessful) error("EPG HTTP ${it.code}")
             val body = it.body ?: error("Empty EPG response")
-            val parsed = EpgInput.open(body.byteStream(), url, it.header("Content-Encoding").orEmpty()).use(XmlTvParser::parse)
-            require(parsed.isNotEmpty()) { "EPG contained no valid programmes" }
-            return parsed
+            return store.savePrograms { emit ->
+                EpgInput.open(body.byteStream(), url, it.header("Content-Encoding").orEmpty()).use { input ->
+                    XmlTvParser.parse(input, emit)
+                }
+            }
         }
     }
 

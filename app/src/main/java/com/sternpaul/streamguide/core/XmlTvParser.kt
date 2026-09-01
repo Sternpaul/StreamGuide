@@ -8,8 +8,10 @@ import org.xml.sax.helpers.DefaultHandler
 import javax.xml.parsers.SAXParserFactory
 
 object XmlTvParser {
-    fun parse(input: InputStream): List<Program> {
-        val results = mutableListOf<Program>()
+    fun parse(input: InputStream): List<Program> = buildList { parse(input) { add(it) } }
+
+    fun parse(input: InputStream, onProgram: (Program) -> Unit): Int {
+        var count = 0
         val factory = SAXParserFactory.newInstance().apply {
             isNamespaceAware = false
             try { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) } catch (_: Exception) { }
@@ -33,12 +35,15 @@ object XmlTvParser {
                 when (qName.lowercase()) {
                     "title" -> title = buffer.toString().trim()
                     "desc" -> description = buffer.toString().trim()
-                    "programme" -> if (channel.isNotBlank() && title.isNotBlank() && start > 0 && stop > start) results += Program(channel, title, description, start, stop)
+                    "programme" -> if (channel.isNotBlank() && title.isNotBlank() && start > 0 && stop > start) {
+                        onProgram(Program(channel, title, description, start, stop))
+                        count++
+                    }
                 }
                 activeTag = ""; buffer.setLength(0)
             }
         })
-        return results
+        return count
     }
 
     private fun parseDate(raw: String?): Long {

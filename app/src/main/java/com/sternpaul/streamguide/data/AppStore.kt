@@ -20,15 +20,35 @@ class AppStore(private val context: Context) {
     }
     private val channelsFile = File(context.filesDir, "channels.json")
     private val programsFile = File(context.filesDir, "programs.json")
+    private val epgDatabase by lazy { EpgDatabase(context) }
 
     fun getProvider(): ProviderConfig? = secure.getString("provider", null)?.let(::providerFromJson)
     fun saveProvider(provider: ProviderConfig) { secure.edit().putString("provider", providerToJson(provider).toString()).apply() }
-    fun clearProvider() { secure.edit().remove("provider").apply(); prefs.edit().remove("group_order").apply(); channelsFile.delete(); programsFile.delete() }
+    fun clearProvider() {
+        secure.edit().remove("provider").apply()
+        prefs.edit().remove("group_order").remove("epg_sqlite_migrated").apply()
+        channelsFile.delete()
+        programsFile.delete()
+        epgDatabase.clear()
+    }
 
     fun getChannels(): List<Channel> = readModels(channelsFile, ::channelFromJson)
     fun saveChannels(channels: List<Channel>) = JsonLinesStore.write(channelsFile, channels.asSequence()) { channelToJson(it).toString() }
-    fun getPrograms(): List<Program> = readModels(programsFile, ::programFromJson)
-    fun savePrograms(programs: List<Program>) = JsonLinesStore.write(programsFile, programs.asSequence()) { programToJson(it).toString() }
+    fun getPrograms(): List<Program> { ensureEpgMigrated(); return epgDatabase.all() }
+    fun getPrograms(channelIds: Collection<String>, startMs: Long, endMs: Long, limit: Int = 5_000): List<Program> {
+        ensureEpgMigrated()
+        return epgDatabase.query(channelIds, startMs, endMs, limit)
+    }
+    fun searchProgramChannelIds(query: String): Set<String> { ensureEpgMigrated(); return epgDatabase.searchChannelIds(query) }
+    fun programChannelIds(): Set<String> { ensureEpgMigrated(); return epgDatabase.distinctChannelIds() }
+    fun programCount(): Int { ensureEpgMigrated(); return epgDatabase.count() }
+    fun savePrograms(programs: List<Program>): Int = savePrograms { emit -> programs.forEach(emit) }
+    fun savePrograms(producer: ((Program) -> Unit) -> Unit): Int {
+        val count = epgDatabase.replacePrograms(producer)
+        prefs.edit().putBoolean("epg_sqlite_migrated", true).apply()
+        programsFile.delete()
+        return count
+    }
     fun openContentUri(uri: String) = context.contentResolver.openInputStream(android.net.Uri.parse(uri)) ?: error("Cannot open selected playlist file")
 
     fun epgHours(): Int = prefs.getInt("epg_hours", AppSettings.DEFAULT_EPG_HOURS).takeIf { it in AppSettings.allowedEpgHours } ?: AppSettings.DEFAULT_EPG_HOURS
@@ -68,6 +88,34 @@ class AppStore(private val context: Context) {
         val hash = android.util.Base64.decode(secure.getString("pin_hash", ""), android.util.Base64.NO_WRAP)
         PinHasher.verify(pin, salt, hash)
     }.getOrDefault(false)
+
+    @Synchronized private fun ensureEpgMigrated() {
+        if (prefs.getBoolean("epg_sqlite_migrated", false)) return
+        if (!programsFile.exists() || programsFile.length() == 0L) {
+            prefs.edit().putBoolean("epg_sqlite_migrated", true).apply()
+            return
+        }
+        runCatching {
+            val first = programsFile.bufferedReader().use { reader ->
+                generateSequence { reader.read() }.map(Int::toChar).firstOrNull { !it.isWhitespace() }
+            }
+            if (first == '[') {
+                epgDatabase.replacePrograms(readModels(programsFile, ::programFromJson).asSequence())
+            } else {
+                programsFile.bufferedReader().use { reader ->
+                    epgDatabase.replacePrograms(
+                        reader.lineSequence().filter(String::isNotBlank).mapNotNull { line ->
+                            runCatching { programFromJson(JSONObject(line)) }.getOrNull()
+                        }
+                    )
+                }
+            }
+            prefs.edit().putBoolean("epg_sqlite_migrated", true).apply()
+            programsFile.delete()
+        }.onFailure { error ->
+            setLastError("EPG database migration failed: ${error.message?.take(120) ?: "unknown error"}")
+        }
+    }
 
     private fun <T : Any> readModels(file: File, transform: (JSONObject) -> T?): List<T> = runCatching {
         if (!file.exists()) return emptyList()

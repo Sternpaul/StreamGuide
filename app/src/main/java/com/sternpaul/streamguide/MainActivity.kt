@@ -281,6 +281,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, hours: Int, selected: Boolean, vm: MainViewModel) {
+    LaunchedEffect(channel.id, windowStart, hours) { vm.ensurePrograms(channel.id) }
     val windowEnd = windowStart + hours * 3_600_000L
     val slices = GuideTimeline.slices(channel, programs, windowStart, windowEnd)
     Row(Modifier.fillMaxWidth().height(74.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -336,6 +337,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun GuideChannelRow(channel: Channel, programs: List<Program>, selected: Boolean, vm: MainViewModel) {
+    LaunchedEffect(channel.id) { vm.ensurePrograms(channel.id) }
     var focused by remember { mutableStateOf(false) }
     val borderColor = if (focused || selected) Focus else Color.Transparent
     Row(
