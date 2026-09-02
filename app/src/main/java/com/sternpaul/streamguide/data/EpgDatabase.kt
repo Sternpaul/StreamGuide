@@ -16,6 +16,13 @@ data class EpgStorageSnapshot(
 )
 
 class EpgDatabase(context: Context) : SQLiteOpenHelper(context, "streamguide_epg.db", null, 1) {
+    init { setWriteAheadLoggingEnabled(true) }
+
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.execSQL("PRAGMA synchronous=NORMAL")
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE programs (channel_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL)")
         db.execSQL("CREATE INDEX programs_channel_time ON programs(channel_id, start_ms, end_ms)")

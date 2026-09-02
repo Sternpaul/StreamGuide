@@ -4,14 +4,18 @@ import com.sternpaul.streamguide.core.*
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 class PlaylistRepository(private val store: AppStore) {
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS).followRedirects(true).build()
+    private val refreshMutex = Mutex()
 
     suspend fun refreshAll(onProgress: suspend (String) -> Unit = {}): RefreshStatus = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
         val refreshStartedNs = System.nanoTime()
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
@@ -32,6 +36,7 @@ class PlaylistRepository(private val store: AppStore) {
                 } else store.programCount()
             }.getOrElse { error ->
                 epgWarning = "TV guide update failed: ${error.message?.take(140) ?: "unknown error"}. Previous guide kept."
+                store.appendDiagnosticError("EPG update", error.message ?: error.javaClass.simpleName)
                 onProgress(epgWarning!!)
                 store.programCount()
             }
@@ -52,19 +57,31 @@ class PlaylistRepository(private val store: AppStore) {
             store.setLastFullRefreshDurationMs(elapsedMs(refreshStartedNs))
             val message = e.message?.take(180) ?: "Refresh failed"
             store.setLastError(message)
+            store.appendDiagnosticError("Playlist update", message)
             throw IllegalStateException(message, e)
+        }
         }
     }
 
     suspend fun refreshEpg(): Int = withContext(Dispatchers.IO) {
-        val provider = store.getProvider() ?: return@withContext 0
+        refreshMutex.withLock {
+        val completedAgoMs = System.currentTimeMillis() - store.lastEpgRefresh()
+        if (store.lastEpgRefresh() > 0 && completedAgoMs in 0 until 60_000L) return@withLock store.programCount()
+        val provider = store.getProvider() ?: error("Add a playlist first")
         val startedNs = System.nanoTime()
-        val count = refreshEpgInternal(provider) ?: return@withContext store.programCount()
-        val now = System.currentTimeMillis()
-        store.setLastRefresh(now)
-        store.recordEpgRefresh(now, elapsedMs(startedNs))
-        store.setLastError("")
-        count
+        try {
+            val count = refreshEpgInternal(provider) ?: error("No EPG URL is configured for this playlist")
+            val now = System.currentTimeMillis()
+            store.recordEpgRefresh(now, elapsedMs(startedNs))
+            store.setLastError("")
+            count
+        } catch (error: Exception) {
+            val message = error.message?.take(180) ?: "TV guide update failed"
+            store.setLastError(message)
+            store.appendDiagnosticError("EPG update", message)
+            throw IllegalStateException(message, error)
+        }
+        }
     }
 
     private fun refreshEpgInternal(provider: ProviderConfig): Int? {

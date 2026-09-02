@@ -32,6 +32,8 @@ VOD, series and recording are intentionally excluded.
 - Two-, three- or six-hour guide width configured globally in Settings
 - First Back press on Live TV is captured; press Back again to exit
 - Search across channel and programme titles without loading the complete EPG into memory
+- Strong white/blue focus for the active column; the open category and selected channel remain muted but identifiable when focus moves right
+- No duplicated channel/programme footer in Live TV, leaving room for additional guide rows
 
 ### Playback
 
@@ -50,15 +52,16 @@ Seeking cannot work on a provider stream that exposes no seekable live window or
 ### Guide and catch-up
 
 - Dense, remote-focusable EPG timeline
-- Current programme progress and programme descriptions
+- Current programme progress and times in the guide cells
+- Selecting a live programme starts its channel directly without adding a permanent on-screen Watch button
 - Existing M3U catch-up templates are expanded from programme start and duration
-- A past programme exposes the existing **Play catch-up** action only when that channel advertises catch-up support
+- Selecting an eligible past programme starts catch-up directly; unsupported programmes add no UI
 
-No additional catch-up browser or permanent catch-up buttons have been added. A future archive browser should be opened contextually from a past programme, not occupy space in the normal Live TV screen.
+No additional catch-up browser or permanent catch-up buttons have been added. A future archive browser should remain contextual to the existing timeline rather than occupy space in Live TV.
 
 ### EPG diagnostics
 
-Settings includes an EPG diagnostics card showing:
+Settings contains a clearly labeled **Diagnostics** entry. Its remote-focusable subpage shows:
 
 - Channels with guide data: named numerator, denominator and percentage
 - Programmes mapped to known channel IDs: named numerator, denominator and percentage
@@ -71,8 +74,9 @@ Settings includes an EPG diagnostics card showing:
 - Samples of visible channels without guide data
 - Last successful EPG refresh, EPG duration and full-update duration
 - Last retained update warning
+- A persistent, clearable error log for playlist, EPG, diagnostics and playback failures; credentials are redacted
 
-Hidden channels are excluded from the channel-coverage denominator, but their IDs remain valid when calculating whether imported programmes are mapped.
+EPG writes use SQLite write-ahead logging, and refresh requests are serialized so guide reads and duplicate refresh triggers do not block one another. Hidden channels are excluded from the channel-coverage denominator, but their IDs remain valid when calculating whether imported programmes are mapped.
 
 ### Multiview
 

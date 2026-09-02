@@ -13,7 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppScreen { GUIDE, SEARCH, SETTINGS, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
+enum class AppScreen { GUIDE, SEARCH, SETTINGS, DIAGNOSTICS, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
 enum class OverlayMenu { NONE, APP, CHANNEL }
 enum class OptionsContext { CHANNEL, GROUP }
@@ -76,6 +76,7 @@ data class UiState(
     val importLog: List<String> = emptyList(),
     val importFinished: Boolean = false,
     val epgDiagnostics: EpgDiagnostics? = null,
+    val diagnosticErrors: List<DiagnosticLogEntry> = emptyList(),
     val diagnosticsLoading: Boolean = false,
     val diagnosticsError: String = "",
     val overlayMenu: OverlayMenu = OverlayMenu.NONE
@@ -155,6 +156,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             timelineHours = store.timelineHours(),
             epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updateEpgOnStart = store.updateEpgOnStart(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
+            diagnosticErrors = store.diagnosticErrors(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
         )
     }
@@ -176,14 +178,24 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         epgDiagnostics = diagnostics,
                         diagnosticsLoading = false,
                         diagnosticsError = "",
+                        diagnosticErrors = store.diagnosticErrors(),
                         status = state.status.copy(programCount = diagnostics.totalPrograms)
                     )
                 }
                 .onFailure { error ->
                     if (requestId != diagnosticsRequestId) return@onFailure
-                    state = state.copy(diagnosticsLoading = false, diagnosticsError = error.message ?: "Diagnostics unavailable")
+                    store.appendDiagnosticError("Diagnostics", error.message ?: error.javaClass.simpleName)
+                    state = state.copy(diagnosticsLoading = false, diagnosticsError = error.message ?: "Diagnostics unavailable", diagnosticErrors = store.diagnosticErrors())
                 }
         }
+    }
+    fun recordDiagnosticError(area: String, message: String) {
+        store.appendDiagnosticError(area, message)
+        state = state.copy(diagnosticErrors = store.diagnosticErrors())
+    }
+    fun clearDiagnosticErrors() {
+        store.clearDiagnosticErrors()
+        state = state.copy(diagnosticErrors = emptyList())
     }
     fun toggleAppMenu() { state = state.copy(overlayMenu = if (state.overlayMenu == OverlayMenu.APP) OverlayMenu.NONE else OverlayMenu.APP) }
     fun toggleChannelMenu() {
@@ -352,7 +364,10 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                     )
                     refreshEpgDiagnostics()
                 }
-                .onFailure { error -> state = state.copy(loading = false, error = error.message ?: "Refresh failed", status = state.status.copy(running = false, message = error.message ?: "Refresh failed")) }
+                .onFailure { error ->
+                    val message = error.message ?: "Refresh failed"
+                    state = state.copy(loading = false, error = message, diagnosticErrors = store.diagnosticErrors(), status = state.status.copy(running = false, message = message))
+                }
         }
     }
 
@@ -367,13 +382,13 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         programs = emptyList(),
                         programIndex = ProgramIndex(emptyList()),
                         programsLoadedFor = emptySet(),
-                        status = state.status.copy(running = false, lastSuccessEpochMs = store.lastRefresh(), message = "Updated $count guide programmes", programCount = count)
+                        status = state.status.copy(running = false, lastSuccessEpochMs = store.lastEpgRefresh(), message = "Updated $count guide programmes", programCount = count)
                     )
                     refreshEpgDiagnostics()
                 }
                 .onFailure { error ->
                     val message = error.message ?: "TV guide update failed"
-                    state = state.copy(loading = false, error = message, status = state.status.copy(running = false, message = message))
+                    state = state.copy(loading = false, error = message, diagnosticErrors = store.diagnosticErrors(), status = state.status.copy(running = false, message = message))
                 }
         }
     }

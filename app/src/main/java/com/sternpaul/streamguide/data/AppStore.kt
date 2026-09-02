@@ -29,7 +29,7 @@ class AppStore(private val context: Context) {
         prefs.edit().remove("group_order").remove("epg_sqlite_migrated")
             .remove("last_refresh").remove("last_error")
             .remove("last_epg_refresh").remove("last_epg_duration_ms").remove("last_full_refresh_duration_ms")
-            .remove("recent_channels").remove("multiview_channels").apply()
+            .remove("recent_channels").remove("multiview_channels").remove("diagnostic_error_log").apply()
         channelsFile.delete()
         programsFile.delete()
         epgDatabase.clear()
@@ -100,6 +100,26 @@ class AppStore(private val context: Context) {
     fun setLastFullRefreshDurationMs(durationMs: Long) { prefs.edit().putLong("last_full_refresh_duration_ms", durationMs).apply() }
     fun lastError(): String = prefs.getString("last_error", "").orEmpty()
     fun setLastError(value: String) { prefs.edit().putString("last_error", value).apply() }
+    @Synchronized fun diagnosticErrors(): List<DiagnosticLogEntry> = runCatching {
+        val array = JSONArray(prefs.getString("diagnostic_error_log", "[]") ?: "[]")
+        (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let { item ->
+                DiagnosticLogEntry(item.optLong("time"), item.optString("area"), item.optString("message"))
+                    .takeIf { it.timestampEpochMs > 0 && it.area.isNotBlank() && it.message.isNotBlank() }
+            }
+        }
+    }.getOrDefault(emptyList())
+    @Synchronized fun appendDiagnosticError(area: String, rawMessage: String, nowEpochMs: Long = System.currentTimeMillis()) {
+        val entry = DiagnosticLogEntry(nowEpochMs, area.take(40), DiagnosticMessageSanitizer.sanitize(rawMessage))
+        val current = diagnosticErrors()
+        if (current.firstOrNull()?.let { it.area == entry.area && it.message == entry.message } == true) return
+        val array = JSONArray()
+        (listOf(entry) + current).take(50).forEach {
+            array.put(JSONObject().put("time", it.timestampEpochMs).put("area", it.area).put("message", it.message))
+        }
+        prefs.edit().putString("diagnostic_error_log", array.toString()).apply()
+    }
+    fun clearDiagnosticErrors() { prefs.edit().remove("diagnostic_error_log").apply() }
     fun recentChannelIds(): List<String> = prefs.getString("recent_channels", "").orEmpty().split('|').filter { it.isNotBlank() }
     fun saveRecentChannelIds(ids: List<String>) { prefs.edit().putString("recent_channels", ids.take(30).joinToString("|")).apply() }
     fun multiviewChannelIds(): List<String> = prefs.getString("multiview_channels", "").orEmpty().split('|').filter { it.isNotBlank() }

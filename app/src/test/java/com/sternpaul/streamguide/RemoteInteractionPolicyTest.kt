@@ -17,6 +17,11 @@ class RemoteInteractionPolicyTest {
     }
 
     @Test
+    fun backFromDiagnosticsReturnsToSettings() {
+        assertEquals(BackAction.GO_TO_SETTINGS, BackNavigationPolicy.action(AppScreen.DIAGNOSTICS, exitArmed = false))
+    }
+
+    @Test
     fun playerRemoteKeysMapToRealPlaybackActions() {
         assertEquals(PlayerRemoteAction.SEEK_BACK, PlayerRemotePolicy.action(KeyEvent.KEYCODE_DPAD_LEFT))
         assertEquals(PlayerRemoteAction.SEEK_FORWARD, PlayerRemotePolicy.action(KeyEvent.KEYCODE_DPAD_RIGHT))

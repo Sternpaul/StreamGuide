@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -63,6 +64,7 @@ import kotlinx.coroutines.launch
 private val Bg = Color(0xFF080B0F)
 private val Panel = Color(0xFF10151C)
 private val Panel2 = Color(0xFF171E28)
+private val OpenSelection = Color(0xFF263445)
 private val Focus = Color(0xFF2F80ED)
 private val TextPrimary = Color(0xFFF3F6FA)
 private val TextMuted = Color(0xFFA9B4C4)
@@ -99,6 +101,7 @@ class MainActivity : ComponentActivity() {
         } else {
             when (BackNavigationPolicy.action(state.screen, exitArmed)) {
                 BackAction.GO_TO_LIVE_TV -> vm.navigate(AppScreen.GUIDE)
+                BackAction.GO_TO_SETTINGS -> vm.navigate(AppScreen.SETTINGS)
                 BackAction.ARM_EXIT -> exitArmed = true
                 BackAction.EXIT -> activity?.finish()
             }
@@ -122,6 +125,7 @@ class MainActivity : ComponentActivity() {
                         AppScreen.SEARCH -> SearchScreen(state, vm)
                         AppScreen.MULTIVIEW -> MultiviewScreen(state, vm)
                         AppScreen.SETTINGS -> SettingsScreen(state, vm)
+                        AppScreen.DIAGNOSTICS -> DiagnosticsScreen(state, vm)
                         AppScreen.ORGANIZE -> OrganizeScreen(state, vm)
                         else -> Unit
                     }
@@ -145,6 +149,7 @@ class MainActivity : ComponentActivity() {
         AppScreen.SEARCH -> "Search"
         AppScreen.MULTIVIEW -> "Multiview"
         AppScreen.SETTINGS -> "Settings"
+        AppScreen.DIAGNOSTICS -> "Diagnostics"
         AppScreen.ORGANIZE -> "Manage channels"
         else -> "StreamGuide"
     }
@@ -169,7 +174,7 @@ class MainActivity : ComponentActivity() {
         MenuDestination("Live TV", Icons.Default.LiveTv, selected = state.screen == AppScreen.GUIDE, modifier = Modifier.focusRequester(firstFocus)) { vm.navigate(AppScreen.GUIDE) }
         MenuDestination("Search", Icons.Default.Search, selected = state.screen == AppScreen.SEARCH) { vm.navigate(AppScreen.SEARCH) }
         MenuDestination("Multiview", Icons.Default.GridView, selected = state.screen == AppScreen.MULTIVIEW) { vm.navigate(AppScreen.MULTIVIEW) }
-        MenuDestination("Settings", Icons.Default.Settings, selected = state.screen == AppScreen.SETTINGS || state.screen == AppScreen.ORGANIZE) { vm.navigate(AppScreen.SETTINGS) }
+        MenuDestination("Settings", Icons.Default.Settings, selected = state.screen in setOf(AppScreen.SETTINGS, AppScreen.DIAGNOSTICS, AppScreen.ORGANIZE)) { vm.navigate(AppScreen.SETTINGS) }
     }
 }
 
@@ -239,14 +244,6 @@ class MainActivity : ComponentActivity() {
                 }
                 if (state.visibleChannels.isEmpty()) item { EmptyGuide(state.provider != null, vm::refresh) }
             }
-            state.selectedChannelId?.let { id ->
-                state.channels.firstOrNull { it.id == id }?.let { channel ->
-                    val channelPrograms = state.programsFor(channel)
-                    val selected = state.selectedProgram?.takeIf { it.channelId == channel.id || it.channelId == channel.tvgId }
-                    if (selected != null) ProgrammeDetailsBar(channel, selected, vm)
-                    else SelectedChannelBar(channel, currentAndNext(channel, channelPrograms).firstOrNull(), lastCatchup(channel, channelPrograms), vm)
-                }
-            }
         }
     }
 }
@@ -257,7 +254,12 @@ class MainActivity : ComponentActivity() {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(state.groups) { group ->
                 val count = state.channelCountForGroup(group)
-                TvButton({ vm.selectGroup(group) }, selected = state.selectedGroup == group, modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) vm.focusGroup(group) }) {
+                TvButton(
+                    { vm.selectGroup(group) },
+                    selected = state.selectedGroup == group,
+                    selectedUnfocusedColor = OpenSelection,
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) vm.focusGroup(group) }
+                ) {
                     Icon(if(group=="Favorites") Icons.Default.Star else Icons.Default.Folder, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
                 }
             }
@@ -288,12 +290,13 @@ class MainActivity : ComponentActivity() {
         var channelFocused by remember { mutableStateOf(false) }
         Row(
             Modifier.width(300.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
-                .background(if (channelFocused || selected) Color(0xFF1C2D43) else Panel)
+                .background(when { channelFocused -> Color(0xFF29496F); selected -> OpenSelection; else -> Panel })
+                .border(if (channelFocused) 2.dp else 0.dp, if (channelFocused) Color.White else Color.Transparent, RoundedCornerShape(7.dp))
                 .onFocusChanged { channelFocused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, null) }
                 .focusable().combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
                 .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(Modifier.width(3.dp).fillMaxHeight().background(if (channelFocused || selected) Focus else Color.Transparent)); Spacer(Modifier.width(9.dp))
+            Box(Modifier.width(3.dp).fillMaxHeight().background(if (channelFocused) Color.White else if (selected) Focus else Color.Transparent)); Spacer(Modifier.width(9.dp))
             Text((channel.providerOrder + 1).toString(), Modifier.width(32.dp), color = TextMuted, fontSize = 12.sp)
             if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(36.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.displayName.take(1), fontWeight = FontWeight.Bold) }
             Spacer(Modifier.width(9.dp)); Text(channel.displayName, Modifier.weight(1f), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -324,7 +327,13 @@ class MainActivity : ComponentActivity() {
             .background(if (focused) Color(0xFF29496F) else if (active) Color(0xFF1A3658) else Panel2)
             .border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, program) }
-            .focusable().combinedClickable(onClick = { vm.selectProgram(channel.id, program) })
+            .focusable().combinedClickable(onClick = {
+                when {
+                    past && channel.catchupSource.isNotBlank() && channel.catchupDays > 0 -> vm.playCatchup(channel, program)
+                    active -> vm.play(channel.id)
+                    else -> vm.selectProgram(channel.id, program)
+                }
+            })
             .padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.Center
     ) {
         Text(program.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
@@ -367,36 +376,6 @@ class MainActivity : ComponentActivity() {
         Text(program?.title ?: "No programme information", color=if(program==null) TextMuted else TextPrimary, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=15.sp)
         if(program!=null) Text("${time(program.startEpochMs)} – ${time(program.endEpochMs)}", color=TextMuted, fontSize=11.sp)
         if(active) LinearProgressIndicator(progress={((now-program!!.startEpochMs).toFloat()/(program.endEpochMs-program.startEpochMs)).coerceIn(0f,1f)}, Modifier.fillMaxWidth().padding(top=5.dp).height(2.dp), color=Focus, trackColor=Color(0xFF32465E))
-    }
-}
-
-@Composable private fun ProgrammeDetailsBar(channel: Channel, program: Program, vm: MainViewModel) {
-    val now = System.currentTimeMillis()
-    val past = program.endEpochMs <= now
-    val live = now in program.startEpochMs until program.endEpochMs
-    Row(Modifier.fillMaxWidth().height(88.dp).padding(top = 8.dp).clip(RoundedCornerShape(9.dp)).background(Panel2).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(program.title, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.width(10.dp)); Text("${SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(program.startEpochMs))}  ${time(program.startEpochMs)}–${time(program.endEpochMs)}", color = if (live) Focus else TextMuted, fontSize = 12.sp)
-            }
-            Text(program.description.ifBlank { channel.displayName }, color = TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
-        }
-        if (past && channel.catchupSource.isNotBlank() && channel.catchupDays > 0) {
-            TvButton({ vm.playCatchup(channel, program) }, selected = true) { Icon(Icons.Default.Replay, null); Spacer(Modifier.width(6.dp)); Text("Play catch-up") }
-        } else if (live) {
-            TvButton({ vm.play(channel.id) }, selected = true) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Watch live") }
-        } else {
-            Text("Upcoming", color = TextMuted, fontSize = 13.sp)
-        }
-    }
-}
-
-@Composable private fun SelectedChannelBar(channel: Channel, program: Program?, previous: Program?, vm: MainViewModel) {
-    Row(Modifier.fillMaxWidth().height(72.dp).padding(top=8.dp).clip(RoundedCornerShape(9.dp)).background(Panel2).padding(horizontal=16.dp), verticalAlignment=Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(program?.title ?: channel.displayName, fontWeight=FontWeight.SemiBold, maxLines=1); Text(program?.description?.ifBlank { channel.displayGroup } ?: channel.displayGroup, color=TextMuted, maxLines=1, overflow=TextOverflow.Ellipsis, fontSize=12.sp) }
-        if(previous != null && channel.catchupSource.isNotBlank()) { TvButton({vm.playCatchup(channel,previous)}) { Icon(Icons.Default.Replay,null); Spacer(Modifier.width(4.dp)); Text("Catch-up") }; Spacer(Modifier.width(6.dp)) }
-        TvButton({vm.play(channel.id)}, selected=true) { Icon(Icons.Default.PlayArrow,null); Spacer(Modifier.width(4.dp)); Text("Watch") }
     }
 }
 
@@ -553,6 +532,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         item {
+            SettingsCard("DIAGNOSTICS") {
+                SettingRow(Icons.Default.Analytics, "Diagnostics", "EPG mapping, update status and error log") { vm.navigate(AppScreen.DIAGNOSTICS) }
+            }
+        }
+        item {
             SettingsCard("PLAYLIST") {
                 SettingRow(
                     Icons.AutoMirrored.Filled.PlaylistPlay,
@@ -573,27 +557,55 @@ class MainActivity : ComponentActivity() {
             }
         }
         item {
+            TvButton(vm::clearProvider, danger = true) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(7.dp)); Text("Remove playlist and local data") }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable private fun DiagnosticsScreen(state: UiState, vm: MainViewModel) {
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { firstFocus.requestFocus(); vm.refreshEpgDiagnostics() }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 42.dp, vertical = 22.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("EPG mapping and update health", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Counts use the complete stored guide, not only the programmes currently on screen.", color = TextMuted, fontSize = 13.sp)
+                }
+                TvButton(vm::refreshEpgDiagnostics, modifier = Modifier.focusRequester(firstFocus)) {
+                    Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(7.dp)); Text("Refresh")
+                }
+            }
+        }
+        item {
             SettingsCard("STATUS") {
                 Column(Modifier.padding(16.dp)) {
                     StatusLine("Channels", state.channels.size.toString())
                     StatusLine("Programmes", state.status.programCount.toString())
                     StatusLine("EPG automatic update", if (state.epgAutoUpdate) "On · every ${state.epgHours}h" else "Off")
-                    StatusLine("Last successful update", if (state.status.lastSuccessEpochMs > 0) SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(state.status.lastSuccessEpochMs)) else "Never")
+                    StatusLine("Last successful update", diagnosticTime(state.status.lastSuccessEpochMs))
                 }
             }
         }
         item {
-            SettingsCard("EPG DIAGNOSTICS") {
+            SettingsCard("EPG MAPPING") {
                 when {
-                    state.diagnosticsLoading && state.epgDiagnostics == null -> Text("Calculating guide coverage…", color = TextMuted, modifier = Modifier.padding(16.dp))
+                    state.diagnosticsLoading && state.epgDiagnostics == null -> Text("Calculating EPG mapping…", color = TextMuted, modifier = Modifier.padding(16.dp))
                     state.diagnosticsError.isNotBlank() && state.epgDiagnostics == null -> Text(state.diagnosticsError, color = Color(0xFFFF9AA5), modifier = Modifier.padding(16.dp))
                     state.epgDiagnostics != null -> EpgDiagnosticsContent(state.epgDiagnostics)
-                    else -> Text("No guide diagnostics available yet.", color = TextMuted, modifier = Modifier.padding(16.dp))
+                    else -> Text("No EPG mapping diagnostics available yet.", color = TextMuted, modifier = Modifier.padding(16.dp))
                 }
             }
         }
         item {
-            TvButton(vm::clearProvider, danger = true) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(7.dp)); Text("Remove playlist and local data") }
+            SettingsCard("ERROR LOG") { DiagnosticErrorLog(state.diagnosticErrors, vm::clearDiagnosticErrors) }
+        }
+        item {
+            TvButton({ vm.navigate(AppScreen.SETTINGS) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(7.dp)); Text("Back to Settings") }
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -632,6 +644,19 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(10.dp))
             Text("LAST UPDATE WARNING", color = Color(0xFFFF9AA5), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text(diagnostics.lastError, color = Color(0xFFFFC1C7), fontSize = 12.sp)
+        }
+    }
+}
+@Composable private fun DiagnosticErrorLog(entries: List<DiagnosticLogEntry>, onClear: () -> Unit) {
+    Column(Modifier.padding(16.dp)) {
+        if (entries.isEmpty()) {
+            Text("No recorded errors.", color = TextMuted, fontSize = 12.sp)
+        } else {
+            entries.take(20).forEach { entry ->
+                Text("${diagnosticTime(entry.timestampEpochMs)} · ${entry.area}", color = Color(0xFFFF9AA5), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(entry.message, fontSize = 12.sp, modifier = Modifier.padding(bottom = 9.dp))
+            }
+            TvButton(onClear, danger = true) { Icon(Icons.Default.DeleteSweep, null); Spacer(Modifier.width(7.dp)); Text("Clear error log") }
         }
     }
 }
@@ -842,7 +867,9 @@ private fun TvTextField(
                 }
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                scheduleRecovery(PlaybackRecoveryPolicy.diagnostic(error))
+                val diagnostic = PlaybackRecoveryPolicy.diagnostic(error)
+                vm.recordDiagnosticError("Playback · ${channel.displayName}", diagnostic)
+                scheduleRecovery(diagnostic)
             }
         }
         player.addListener(listener)
@@ -921,6 +948,7 @@ private fun TvButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     selected: Boolean = false,
+    selectedUnfocusedColor: Color = Focus,
     danger: Boolean = false,
     content: @Composable RowScope.() -> Unit
 ) {
@@ -928,8 +956,9 @@ private fun TvButton(
     val focusScale by animateFloatAsState(if (focused) 1.035f else 1f, label = "tv-button-focus")
     val bg = when {
         danger && focused -> Color(0xFF7A2630)
-        selected -> Focus
+        focused && selected -> Focus
         focused -> Color(0xFF29496F)
+        selected -> selectedUnfocusedColor
         else -> Panel2
     }
     Surface(
@@ -946,5 +975,4 @@ private fun TvButton(
 @Composable private fun ExitConfirmationBanner(){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.BottomCenter){Surface(Modifier.padding(24.dp),shape=RoundedCornerShape(8.dp),color=Panel2,border=BorderStroke(1.dp,Focus)){Text("Press Back again to exit",modifier=Modifier.padding(horizontal=18.dp,vertical=12.dp),fontWeight=FontWeight.SemiBold)}}}
 @Composable private fun ErrorBanner(message:String,onDismiss:()->Unit){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.BottomCenter){Surface(Modifier.padding(24.dp).combinedClickable(onClick=onDismiss),shape=RoundedCornerShape(8.dp),color=Color(0xFF632A32),border=BorderStroke(1.dp,Color(0xFFFF7785))){Row(Modifier.padding(15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Error,null);Spacer(Modifier.width(10.dp));Text(message);Spacer(Modifier.width(18.dp));Text("Dismiss",fontWeight=FontWeight.Bold)}}}}
 private fun currentAndNext(channel:Channel,programs:List<Program>):List<Program>{val now=System.currentTimeMillis();val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs>now}.sortedBy{it.startEpochMs}.take(2).toList()}
-private fun lastCatchup(channel:Channel,programs:List<Program>):Program?{if(channel.catchupDays<=0)return null;val now=System.currentTimeMillis();val cutoff=now-channel.catchupDays*86_400_000L;val ids=setOf(channel.id,channel.tvgId).filter{it.isNotBlank()}.toSet();return programs.asSequence().filter{it.channelId in ids&&it.endEpochMs in cutoff..now}.maxByOrNull{it.endEpochMs}}
 private fun time(epoch:Long)=SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(epoch))

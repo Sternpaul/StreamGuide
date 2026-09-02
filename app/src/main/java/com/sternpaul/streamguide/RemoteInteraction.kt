@@ -2,10 +2,11 @@ package com.sternpaul.streamguide
 
 import android.view.KeyEvent
 
-enum class BackAction { GO_TO_LIVE_TV, ARM_EXIT, EXIT }
+enum class BackAction { GO_TO_LIVE_TV, GO_TO_SETTINGS, ARM_EXIT, EXIT }
 
 object BackNavigationPolicy {
     fun action(screen: AppScreen, exitArmed: Boolean): BackAction = when {
+        screen == AppScreen.DIAGNOSTICS -> BackAction.GO_TO_SETTINGS
         screen != AppScreen.GUIDE -> BackAction.GO_TO_LIVE_TV
         exitArmed -> BackAction.EXIT
         else -> BackAction.ARM_EXIT
