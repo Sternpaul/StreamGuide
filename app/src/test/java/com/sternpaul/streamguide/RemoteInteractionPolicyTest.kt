@@ -2,6 +2,8 @@ package com.sternpaul.streamguide
 
 import android.view.KeyEvent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteInteractionPolicyTest {
@@ -19,6 +21,13 @@ class RemoteInteractionPolicyTest {
     @Test
     fun backFromDiagnosticsReturnsToSettings() {
         assertEquals(BackAction.GO_TO_SETTINGS, BackNavigationPolicy.action(AppScreen.DIAGNOSTICS, exitArmed = false))
+    }
+
+    @Test
+    fun playbackKeepsTheDisplayAwakeButBrowsingDoesNot() {
+        assertTrue(ScreenAwakePolicy.keepScreenOn(AppScreen.PLAYER))
+        assertFalse(ScreenAwakePolicy.keepScreenOn(AppScreen.GUIDE))
+        assertFalse(ScreenAwakePolicy.keepScreenOn(AppScreen.SETTINGS))
     }
 
     @Test

@@ -38,6 +38,7 @@ VOD, series and recording are intentionally excluded.
 ### Playback
 
 - Full-screen Media3/ExoPlayer playback
+- Playback keeps the display awake, preventing the Fire TV screensaver/standby timer during a stream
 - Up/Down changes channel
 - Left seeks back 10 seconds when the stream is seekable
 - Right seeks forward 30 seconds when the stream is seekable

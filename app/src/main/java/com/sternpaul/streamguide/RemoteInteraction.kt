@@ -13,6 +13,10 @@ object BackNavigationPolicy {
     }
 }
 
+object ScreenAwakePolicy {
+    fun keepScreenOn(screen: AppScreen): Boolean = screen == AppScreen.PLAYER
+}
+
 enum class PlayerRemoteAction { NONE, PREVIOUS_CHANNEL, NEXT_CHANNEL, SEEK_BACK, SEEK_FORWARD, PLAY_PAUSE, PLAY, PAUSE, TOGGLE_OVERLAY }
 
 object PlayerRemotePolicy {

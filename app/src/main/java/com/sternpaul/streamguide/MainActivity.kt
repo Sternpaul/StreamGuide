@@ -95,6 +95,18 @@ class MainActivity : ComponentActivity() {
     var exitArmed by remember { mutableStateOf(false) }
     LaunchedEffect(exitArmed) { if (exitArmed) { kotlinx.coroutines.delay(2_000); exitArmed = false } }
     LaunchedEffect(state.screen) { exitArmed = false }
+    DisposableEffect(state.screen, activity) {
+        val window = activity?.window
+        val keepScreenOn = ScreenAwakePolicy.keepScreenOn(state.screen)
+        if (keepScreenOn) {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (keepScreenOn) window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
     BackHandler(enabled = state.screen !in setOf(AppScreen.PLAYER, AppScreen.SETUP, AppScreen.EDIT_PROVIDER, AppScreen.IMPORT_STATUS)) {
         if (state.overlayMenu != OverlayMenu.NONE) {
             vm.closeOverlayMenu()
