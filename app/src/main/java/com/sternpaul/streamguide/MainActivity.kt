@@ -623,12 +623,10 @@ class MainActivity : ComponentActivity() {
                     state.epgAutoUpdate
                 ) { vm.setEpgAutoUpdate(!state.epgAutoUpdate) }
                 HorizontalDivider(color = Color(0xFF27303C))
-                SettingToggleRow(
-                    Icons.Default.PowerSettingsNew,
-                    "Update EPG when StreamGuide opens",
-                    "Refresh the guide on launch when its data is stale",
-                    state.updateEpgOnStart
-                ) { vm.setUpdateEpgOnStart(!state.updateEpgOnStart) }
+                Column(Modifier.padding(16.dp)) {
+                    Text("EPG refreshes every time StreamGuide opens", fontWeight = FontWeight.Medium)
+                    Text("Updates in the background while you browse or watch TV.", color = TextMuted, fontSize = 12.sp)
+                }
                 HorizontalDivider(color = Color(0xFF27303C))
                 Column(Modifier.padding(16.dp)) {
                     Text("Automatic update interval", fontWeight = FontWeight.Medium)
@@ -660,7 +658,7 @@ class MainActivity : ComponentActivity() {
                 SettingToggleRow(
                     Icons.Default.PowerSettingsNew,
                     "Update playlist when StreamGuide opens",
-                    "Slower startup; reloads channels and EPG from the provider",
+                    "Also reload channels in the background when the app opens",
                     state.updatePlaylistOnStart
                 ) { vm.setUpdatePlaylistOnStart(!state.updatePlaylistOnStart) }
                 HorizontalDivider(color = Color(0xFF27303C))

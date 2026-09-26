@@ -80,8 +80,6 @@ class AppStore(private val context: Context) {
     fun setTimelineHours(hours: Int) { require(hours in AppSettings.allowedTimelineHours); prefs.edit().putInt("timeline_hours", hours).apply() }
     fun epgAutoUpdate(): Boolean = prefs.getBoolean("epg_auto_update", true)
     fun setEpgAutoUpdate(enabled: Boolean) { prefs.edit().putBoolean("epg_auto_update", enabled).apply() }
-    fun updateEpgOnStart(): Boolean = prefs.getBoolean("epg_update_on_start", true)
-    fun setUpdateEpgOnStart(enabled: Boolean) { prefs.edit().putBoolean("epg_update_on_start", enabled).apply() }
     fun updatePlaylistOnStart(): Boolean = prefs.getBoolean("playlist_update_on_start", false)
     fun setUpdatePlaylistOnStart(enabled: Boolean) { prefs.edit().putBoolean("playlist_update_on_start", enabled).apply() }
     fun groupOrder(): List<String> = runCatching {
@@ -168,7 +166,7 @@ class AppStore(private val context: Context) {
     }
 
     private fun <T : Any> readModels(file: File, transform: (JSONObject) -> T?): List<T> = runCatching {
-        if (!file.exists()) return emptyList()
+        if (!file.exists()) { return emptyList() }
         val first = file.bufferedReader().use { reader ->
             generateSequence { reader.read() }.map(Int::toChar).firstOrNull { !it.isWhitespace() }
         }

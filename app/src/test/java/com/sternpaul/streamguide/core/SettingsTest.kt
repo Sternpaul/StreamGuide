@@ -4,12 +4,12 @@ import org.junit.Test
 class SettingsTest {
  @Test fun epgRefreshDefaultsTo24Hours(){ assertEquals(24, AppSettings.DEFAULT_EPG_HOURS) }
  @Test fun startupRefreshPrefersFullPlaylistUpdateWhenEnabled() {
-  assertEquals(StartupRefreshAction.FULL_PLAYLIST, RefreshPolicy.onAppStart(hasProvider=true, playlistOnStart=true, epgOnStart=true, epgIsStale=true))
+  assertEquals(StartupRefreshAction.FULL_PLAYLIST, RefreshPolicy.onAppStart(hasProvider=true, playlistOnStart=true))
  }
- @Test fun startupRefreshCanUpdateOnlyStaleEpg() {
-  assertEquals(StartupRefreshAction.EPG_ONLY, RefreshPolicy.onAppStart(hasProvider=true, playlistOnStart=false, epgOnStart=true, epgIsStale=true))
+ @Test fun startupRefreshAlwaysUpdatesEpg() {
+  assertEquals(StartupRefreshAction.EPG_ONLY, RefreshPolicy.onAppStart(hasProvider=true, playlistOnStart=false))
  }
- @Test fun startupRefreshDoesNothingWhenUpdatesAreDisabled() {
-  assertEquals(StartupRefreshAction.NONE, RefreshPolicy.onAppStart(hasProvider=true, playlistOnStart=false, epgOnStart=false, epgIsStale=true))
+ @Test fun startupRefreshDoesNothingWithoutProvider() {
+  assertEquals(StartupRefreshAction.NONE, RefreshPolicy.onAppStart(hasProvider=false, playlistOnStart=false))
  }
 }

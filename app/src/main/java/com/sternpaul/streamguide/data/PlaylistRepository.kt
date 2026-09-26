@@ -63,10 +63,11 @@ class PlaylistRepository(private val store: AppStore) {
         }
     }
 
-    suspend fun refreshEpg(): Int = withContext(Dispatchers.IO) {
+    suspend fun refreshEpg(force: Boolean = false): Int = withContext(Dispatchers.IO) {
         refreshMutex.withLock {
-        val completedAgoMs = System.currentTimeMillis() - store.lastEpgRefresh()
-        if (store.lastEpgRefresh() > 0 && completedAgoMs in 0 until 60_000L) return@withLock store.programCount()
+        if (RefreshPolicy.canReuseRecentEpg(force, store.lastEpgRefresh(), System.currentTimeMillis())) {
+            return@withLock store.programCount()
+        }
         val provider = store.getProvider() ?: error("Add a playlist first")
         val startedNs = System.nanoTime()
         try {

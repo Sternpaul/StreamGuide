@@ -62,7 +62,6 @@ data class UiState(
     val status: RefreshStatus = RefreshStatus(),
     val epgHours: Int = AppSettings.DEFAULT_EPG_HOURS,
     val epgAutoUpdate: Boolean = true,
-    val updateEpgOnStart: Boolean = true,
     val updatePlaylistOnStart: Boolean = false,
     val query: String = "",
     val programSearchChannelIds: Set<String> = emptySet(),
@@ -131,32 +130,13 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     private var diagnosticsRequestId: Long = 0
     private var programLoadGeneration: Long = 0
     private var observedEpgRefresh: Long = 0
-    private var lastForegroundRefreshRequest: Long = 0
     var state by mutableStateOf(loadState())
         private set
 
     init {
         observedEpgRefresh = store.lastEpgRefresh()
         refreshEpgDiagnostics()
-        val action = RefreshPolicy.onAppStart(
-            hasProvider = state.provider != null,
-            playlistOnStart = state.updatePlaylistOnStart,
-            epgOnStart = state.updateEpgOnStart,
-            epgIsStale = store.lastEpgRefresh() == 0L || System.currentTimeMillis() - store.lastEpgRefresh() > state.epgHours * 3_600_000L
-        )
-        requestAutomaticRefresh(action)
-    }
-
-    private fun requestAutomaticRefresh(action: StartupRefreshAction) {
-        val now = System.currentTimeMillis()
-        if (action == StartupRefreshAction.NONE || state.loading ||
-            now - lastForegroundRefreshRequest < 60_000L) return
-        lastForegroundRefreshRequest = now
-        when (action) {
-            StartupRefreshAction.FULL_PLAYLIST -> refresh()
-            StartupRefreshAction.EPG_ONLY -> refreshEpgOnly()
-            StartupRefreshAction.NONE -> Unit
-        }
+        // The RESUMED lifecycle callback is the single startup refresh trigger.
     }
 
     private fun loadState(): UiState {
@@ -167,7 +147,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             selectedChannelId = channels.firstOrNull()?.id,
             groupOrder = store.groupOrder(),
             timelineHours = store.timelineHours(),
-            epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updateEpgOnStart = store.updateEpgOnStart(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
+            epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
             diagnosticErrors = store.diagnosticErrors(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
@@ -281,16 +261,11 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         }
         observedEpgRefresh = refreshedAt
         if (!onResume || state.loading) return
-        val lastEpgRefresh = store.lastEpgRefresh()
-        val stale = lastEpgRefresh <= 0L ||
-            System.currentTimeMillis() - lastEpgRefresh > state.epgHours * 3_600_000L
-        val action = RefreshPolicy.onAppStart(
-            hasProvider = state.provider != null,
-            playlistOnStart = state.updatePlaylistOnStart,
-            epgOnStart = state.updateEpgOnStart,
-            epgIsStale = stale
-        )
-        requestAutomaticRefresh(action)
+        when (RefreshPolicy.onAppStart(state.provider != null, state.updatePlaylistOnStart)) {
+            StartupRefreshAction.FULL_PLAYLIST -> refreshInBackground(background = true)
+            StartupRefreshAction.EPG_ONLY -> refreshEpgInBackground(background = true)
+            StartupRefreshAction.NONE -> Unit
+        }
     }
 
     fun jumpTimelineToNow() {
@@ -389,7 +364,9 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun retryImport() { state.provider?.let(::saveProvider) }
     fun editProviderFromImport() { state = state.copy(screen = AppScreen.EDIT_PROVIDER, error = null) }
 
-    fun refresh() {
+    fun refresh() = refreshInBackground(background = false)
+
+    private fun refreshInBackground(background: Boolean) {
         if (state.loading || state.provider == null) return
         state = state.copy(loading = true, error = null, status = state.status.copy(running = true, message = "Updating playlist and EPG…"))
         viewModelScope.launch {
@@ -412,16 +389,20 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                 }
                 .onFailure { error ->
                     val message = error.message ?: "Refresh failed"
-                    state = state.copy(loading = false, error = message, diagnosticErrors = store.diagnosticErrors(), status = state.status.copy(running = false, message = message))
+                    state = state.copy(loading = false, error = if (background) null else message, diagnosticErrors = store.diagnosticErrors(), status = state.status.copy(running = false, message = message))
+                    // A playlist outage must not prevent the mandatory foreground EPG attempt.
+                    if (background) refreshEpgInBackground(background = true)
                 }
         }
     }
 
-    fun refreshEpgOnly() {
+    fun refreshEpgOnly() = refreshEpgInBackground(background = false)
+
+    private fun refreshEpgInBackground(background: Boolean) {
         if (state.loading || state.provider == null) return
         state = state.copy(loading = true, error = null, status = state.status.copy(running = true, message = "Updating TV guide…"))
         viewModelScope.launch {
-            runCatching { repository.refreshEpg() }
+            runCatching { repository.refreshEpg(force = true) }
                 .onSuccess { count ->
                     observedEpgRefresh = store.lastEpgRefresh()
                     val requestedChannelIds = state.programsLoadedFor
@@ -437,7 +418,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                 }
                 .onFailure { error ->
                     val message = error.message ?: "TV guide update failed"
-                    state = state.copy(loading = false, error = message, diagnosticErrors = store.diagnosticErrors(), status = state.status.copy(running = false, message = message))
+                    state = state.copy(loading = false, error = if (background) null else message, diagnosticErrors = store.diagnosticErrors(), status = state.status.copy(running = false, message = message))
                 }
         }
     }
@@ -454,7 +435,6 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
 
     fun setEpgHours(hours: Int) { store.setEpgHours(hours); state = state.copy(epgHours = hours); app.scheduleEpg() }
     fun setEpgAutoUpdate(enabled: Boolean) { store.setEpgAutoUpdate(enabled); state = state.copy(epgAutoUpdate = enabled); app.scheduleEpg() }
-    fun setUpdateEpgOnStart(enabled: Boolean) { store.setUpdateEpgOnStart(enabled); state = state.copy(updateEpgOnStart = enabled) }
     fun setUpdatePlaylistOnStart(enabled: Boolean) { store.setUpdatePlaylistOnStart(enabled); state = state.copy(updatePlaylistOnStart = enabled) }
     fun clearProvider() {
         viewModelScope.launch {

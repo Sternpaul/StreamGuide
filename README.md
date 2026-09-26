@@ -138,7 +138,7 @@ Settings contains functional controls for:
 
 - Automatic EPG updates
 - EPG refresh interval
-- Update stale EPG on startup
+- EPG refresh on every app open or return to the foreground, independently of the periodic-update setting
 - Update playlist on startup
 - Manual EPG-only refresh
 - Manual playlist and EPG refresh
