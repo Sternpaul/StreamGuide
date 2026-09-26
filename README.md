@@ -1,5 +1,7 @@
 # StreamGuide
 
+> **Install on Fire TV:** Open Downloader and enter **8464714**, or visit [aftv.news/8464714](https://aftv.news/8464714). [Download the latest APK](https://github.com/Sternpaul/StreamGuide/releases/latest/download/StreamGuide-firetv.apk).
+
 StreamGuide is a private, local-only IPTV player for Android-based Fire TV devices. It is designed around a Fire TV remote, not a touchscreen, and targets the Fire TV Stick 4K Max 2nd Gen (Fire OS 8 / Android API 30).
 
 StreamGuide provides no channels or media. Use only sources you are authorized to access.
