@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @file:androidx.media3.common.util.UnstableApi
 
 package com.sternpaul.streamguide
@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -49,9 +50,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -78,6 +84,15 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
         setContent { StreamGuideTheme { StreamGuideRoot(viewModel) } }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                viewModel.refreshGuideForCurrentTime(onResume = true)
+                while (true) {
+                    kotlinx.coroutines.delay(60_000)
+                    viewModel.refreshGuideForCurrentTime()
+                }
+            }
+        }
     }
 }
 
@@ -107,7 +122,7 @@ class MainActivity : ComponentActivity() {
             if (keepScreenOn) window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
-    BackHandler(enabled = state.screen !in setOf(AppScreen.PLAYER, AppScreen.SETUP, AppScreen.EDIT_PROVIDER, AppScreen.IMPORT_STATUS)) {
+    BackHandler(enabled = state.screen !in setOf(AppScreen.PLAYER, AppScreen.SETUP, AppScreen.IMPORT_STATUS)) {
         if (state.overlayMenu != OverlayMenu.NONE) {
             vm.closeOverlayMenu()
         } else {
@@ -127,7 +142,7 @@ class MainActivity : ComponentActivity() {
         }) {
             when (state.screen) {
                 AppScreen.SETUP -> SetupScreen(null, vm::saveProvider)
-                AppScreen.EDIT_PROVIDER -> SetupScreen(state.provider, vm::saveProvider)
+                AppScreen.EDIT_PROVIDER -> SetupScreen(state.provider, vm::saveProvider, { vm.navigate(AppScreen.SETTINGS) })
                 AppScreen.IMPORT_STATUS -> ImportStatusScreen(state, vm)
                 AppScreen.PLAYER -> PlayerScreen(state, vm)
                 else -> Column {
@@ -165,12 +180,24 @@ class MainActivity : ComponentActivity() {
         AppScreen.ORGANIZE -> "Manage channels"
         else -> "StreamGuide"
     }
+    val menuFocus = remember { FocusRequester() }
+    LaunchedEffect(state.screen, state.overlayMenu) {
+        if (state.overlayMenu == OverlayMenu.NONE && state.screen != AppScreen.GUIDE) menuFocus.requestFocus()
+    }
     Row(
         Modifier.fillMaxWidth().height(60.dp).background(Color(0xF20B0F14)).padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TvButton(vm::toggleAppMenu, selected = state.overlayMenu == OverlayMenu.APP) {
+        TvButton(vm::toggleAppMenu, modifier = Modifier.focusRequester(menuFocus), selected = state.overlayMenu == OverlayMenu.APP) {
             Icon(Icons.Default.Menu, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Menu")
+        }
+        if (state.screen != AppScreen.GUIDE) {
+            Spacer(Modifier.width(8.dp))
+            val parent = if (state.screen in setOf(AppScreen.DIAGNOSTICS, AppScreen.ORGANIZE)) AppScreen.SETTINGS else AppScreen.GUIDE
+            TvButton({ vm.navigate(parent) }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp)); Text(if (parent == AppScreen.SETTINGS) "Back to Settings" else "Back to Live TV")
+            }
         }
         Spacer(Modifier.width(18.dp)); Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
@@ -182,7 +209,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun AppNavigationMenu(state: UiState, vm: MainViewModel) {
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstFocus.requestFocus() }
-    OverlayMenuPanel(Alignment.CenterStart, "STREAMGUIDE", Modifier.width(310.dp)) {
+    OverlayMenuPanel(Alignment.CenterStart, "STREAMGUIDE", Modifier.width(310.dp), vm::closeOverlayMenu) {
         MenuDestination("Live TV", Icons.Default.LiveTv, selected = state.screen == AppScreen.GUIDE, modifier = Modifier.focusRequester(firstFocus)) { vm.navigate(AppScreen.GUIDE) }
         MenuDestination("Search", Icons.Default.Search, selected = state.screen == AppScreen.SEARCH) { vm.navigate(AppScreen.SEARCH) }
         MenuDestination("Multiview", Icons.Default.GridView, selected = state.screen == AppScreen.MULTIVIEW) { vm.navigate(AppScreen.MULTIVIEW) }
@@ -196,7 +223,7 @@ class MainActivity : ComponentActivity() {
     val firstFocus = remember { FocusRequester() }
     val hasGroupAction = state.optionsContext == OptionsContext.GROUP && group !in setOf("All channels", "Favorites")
     LaunchedEffect(state.optionsContext, channel?.id, group) { if (state.optionsContext == OptionsContext.CHANNEL && channel != null || hasGroupAction) firstFocus.requestFocus() }
-    OverlayMenuPanel(Alignment.CenterEnd, if (state.optionsContext == OptionsContext.GROUP) "CATEGORY OPTIONS" else "CHANNEL OPTIONS", Modifier.width(350.dp)) {
+    OverlayMenuPanel(Alignment.CenterEnd, if (state.optionsContext == OptionsContext.GROUP) "CATEGORY OPTIONS" else "CHANNEL OPTIONS", Modifier.width(350.dp), vm::closeOverlayMenu) {
         if (state.optionsContext == OptionsContext.GROUP) {
             Text(group, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(10.dp))
             if (hasGroupAction) {
@@ -220,13 +247,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun OverlayMenuPanel(alignment: Alignment, title: String, modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+@Composable private fun OverlayMenuPanel(alignment: Alignment, title: String, modifier: Modifier, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
     Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = alignment) {
         Column(modifier.fillMaxHeight().background(Panel).padding(horizontal = 18.dp, vertical = 28.dp)) {
             Text(title, color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
             Spacer(Modifier.height(8.dp)); content()
-            Spacer(Modifier.weight(1f)); Text("Back closes this menu", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(10.dp))
+            Spacer(Modifier.weight(1f))
+            TvButton(onClose, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Close, null); Spacer(Modifier.width(8.dp)); Text("Close menu") }
+            Text("Back closes this menu", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(10.dp))
         }
+    }
     }
 }
 
@@ -243,34 +274,99 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun GuideScreen(state: UiState, vm: MainViewModel) {
+    val channelFocus = remember { FocusRequester() }
+    val categoryFocus = remember { FocusRequester() }
+    val categoryListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Restore the watched channel when returning from playback, including off-screen rows.
+    val focusIndex = state.visibleChannels.indexOfFirst { it.id == state.selectedChannelId }.coerceAtLeast(0)
+    val focusChannel: () -> Unit = {
+        scope.launch {
+            if (state.visibleChannels.isNotEmpty()) {
+                listState.scrollToItem(focusIndex)
+                withFrameNanos { }
+                channelFocus.requestFocus()
+            }
+        }
+    }
+    val focusCategory: () -> Unit = {
+        scope.launch {
+            categoryListState.scrollToItem(state.groups.indexOf(state.selectedGroup).coerceAtLeast(0))
+            withFrameNanos { }
+            categoryFocus.requestFocus()
+        }
+    }
+    LaunchedEffect(state.selectedGroup, state.visibleChannels.isEmpty()) {
+        if (state.visibleChannels.isNotEmpty()) {
+            listState.scrollToItem(focusIndex)
+            withFrameNanos { }
+            channelFocus.requestFocus()
+        }
+    }
     Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp)) {
-        GroupRail(state, vm)
+        GroupRail(state, vm, categoryListState, categoryFocus, focusChannel)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             GuideToolbar(state)
             Spacer(Modifier.height(10.dp))
             GuideHeader(state.timelineStart, state.timelineHours)
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                items(state.visibleChannels, key = { it.id }) { channel ->
-                    TimelineChannelRow(channel, state.programsFor(channel), state.timelineStart, state.timelineHours, channel.id == state.selectedChannelId, vm)
+            LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                itemsIndexed(state.visibleChannels, key = { _, channel -> channel.id }) { index, channel ->
+                    TimelineChannelRow(channel, state.programsFor(channel), state.timelineStart, state.timelineHours, channel.id == state.selectedChannelId, vm,
+                        (if (index == focusIndex) Modifier.focusRequester(channelFocus) else Modifier)
+                            .onPreviewKeyEvent { event ->
+                                if (event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                                    if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.nativeKeyEvent.repeatCount == 0) focusCategory()
+                                    true
+                                } else false
+                            }, index == 0, index == state.visibleChannels.lastIndex)
                 }
-                if (state.visibleChannels.isEmpty()) item { EmptyGuide(state.provider != null, vm::refresh) }
+                if (state.visibleChannels.isEmpty()) item {
+                    if (state.channels.isEmpty()) EmptyGuide(state.provider != null, vm::refresh)
+                    else Text("No channels in this category", color = TextMuted, modifier = Modifier.padding(24.dp))
+                }
             }
         }
     }
 }
 
-@Composable private fun GroupRail(state: UiState, vm: MainViewModel) {
+@Composable private fun GroupRail(
+    state: UiState, vm: MainViewModel,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    categoryFocus: FocusRequester, focusChannel: () -> Unit
+) {
     Column(Modifier.width(225.dp).fillMaxHeight().clip(RoundedCornerShape(10.dp)).background(Panel).padding(10.dp)) {
         Text(state.provider?.name ?: "PLAYLIST", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(state.groups) { group ->
+        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            itemsIndexed(state.groups, key = { _, group -> group }) { index, group ->
                 val count = state.channelCountForGroup(group)
                 TvButton(
-                    { vm.selectGroup(group) },
+                    { if (state.selectedGroup == group) focusChannel() else vm.selectGroup(group) },
                     selected = state.selectedGroup == group,
                     selectedUnfocusedColor = OpenSelection,
-                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) vm.focusGroup(group) }
+                    modifier = Modifier.fillMaxWidth()
+                        .then(if (group == state.selectedGroup) Modifier.focusRequester(categoryFocus) else Modifier)
+                        .focusProperties {
+                            if (index == 0) up = FocusRequester.Cancel
+                            if (index == state.groups.lastIndex) down = FocusRequester.Cancel
+                        }
+                        .onPreviewKeyEvent { event ->
+                            when (event.nativeKeyEvent.keyCode) {
+                                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                    if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.nativeKeyEvent.repeatCount == 0) vm.toggleAppMenu()
+                                    true
+                                }
+                                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                                        if (state.selectedGroup == group) focusChannel() else vm.selectGroup(group)
+                                    }
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                        .onFocusChanged { if (it.isFocused) vm.focusGroup(group) }
                 ) {
                     Icon(if(group=="Favorites") Icons.Default.Star else Icons.Default.Folder, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
                 }
@@ -294,18 +390,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, hours: Int, selected: Boolean, vm: MainViewModel) {
+@Composable private fun TimelineChannelRow(channel: Channel, programs: List<Program>, windowStart: Long, hours: Int, selected: Boolean, vm: MainViewModel, channelModifier: Modifier = Modifier, firstRow: Boolean = false, lastRow: Boolean = false) {
     LaunchedEffect(channel.id, windowStart, hours) { vm.ensurePrograms(channel.id) }
     val windowEnd = windowStart + hours * 3_600_000L
     val slices = GuideTimeline.slices(channel, programs, windowStart, windowEnd)
-    Row(Modifier.fillMaxWidth().height(74.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(74.dp).onPreviewKeyEvent { event ->
+        (firstRow && event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_UP) ||
+            (lastRow && event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+    }, verticalAlignment = Alignment.CenterVertically) {
         var channelFocused by remember { mutableStateOf(false) }
         Row(
-            Modifier.width(300.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+            channelModifier.width(300.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
                 .background(when { channelFocused -> Color(0xFF29496F); selected -> OpenSelection; else -> Panel })
                 .border(if (channelFocused) 2.dp else 0.dp, if (channelFocused) Color.White else Color.Transparent, RoundedCornerShape(7.dp))
                 .onFocusChanged { channelFocused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, null) }
-                .focusable().combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
+                .combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
                 .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(if (channelFocused) Color.White else if (selected) Focus else Color.Transparent)); Spacer(Modifier.width(9.dp))
@@ -339,7 +438,7 @@ class MainActivity : ComponentActivity() {
             .background(if (focused) Color(0xFF29496F) else if (active) Color(0xFF1A3658) else Panel2)
             .border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectProgram(channel.id, program) }
-            .focusable().combinedClickable(onClick = {
+            .combinedClickable(onClick = {
                 when {
                     past && channel.catchupSource.isNotBlank() && channel.catchupDays > 0 -> vm.playCatchup(channel, program)
                     active -> vm.play(channel.id)
@@ -363,7 +462,7 @@ class MainActivity : ComponentActivity() {
     val borderColor = if (focused || selected) Focus else Color.Transparent
     Row(
         Modifier.fillMaxWidth().height(68.dp).clip(RoundedCornerShape(7.dp)).background(if(focused) Color(0xFF1C2D43) else Panel)
-            .onFocusChanged { focused = it.isFocused; if(it.isFocused) vm.selectChannel(channel.id) }.focusable()
+            .onFocusChanged { focused = it.isFocused; if(it.isFocused) vm.selectChannel(channel.id) }
             .combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
             .then(Modifier.padding(1.dp)).background(Color.Transparent).padding(horizontal=12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -436,7 +535,7 @@ class MainActivity : ComponentActivity() {
     val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(MediaItem.fromUri(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
     LaunchedEffect(active) { player.volume = if(active) 1f else 0f }
     DisposableEffect(player) { onDispose { player.release() } }
-    Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.focusable().combinedClickable(onClick=onActivate,onLongClick=onRemove)) {
+    Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.combinedClickable(onClick=onActivate,onLongClick=onRemove)) {
         AndroidView(factory={ PlayerView(it).apply { this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1) } },update={it.player=player},modifier=Modifier.fillMaxSize())
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0xCC10151C)).padding(11.dp),verticalAlignment=Alignment.CenterVertically) { if(active) Icon(Icons.AutoMirrored.Filled.VolumeUp,null,tint=Focus,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp));Text(channel.displayName,Modifier.weight(1f),fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis);Text("Hold to remove",color=TextMuted,fontSize=10.sp) }
         if(focused || active) Box(Modifier.matchParentSize().border(if(focused) 3.dp else 2.dp, if(focused) Color.White else Focus, RoundedCornerShape(9.dp)))
@@ -481,7 +580,7 @@ class MainActivity : ComponentActivity() {
                 val actualPosition = state.channels.sortedWith(ChannelOrdering.manual).indexOfFirst { it.id == channel.id } + 1
                 var focused by remember { mutableStateOf(false) }
                 Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(7.dp)).background(if (focused || selectedId == channel.id) Color(0xFF1C2D43) else Panel)
-                    .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectChannel(channel.id) }.focusable().combinedClickable(onClick = { vm.selectChannel(channel.id) }).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectChannel(channel.id) }.combinedClickable(onClick = { vm.selectChannel(channel.id) }).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(actualPosition.toString(), Modifier.width(52.dp), color = TextMuted)
                     if (channel.logoUrl.isNotBlank()) AsyncImage(channel.logoUrl, null, Modifier.size(34.dp).padding(3.dp)) else Box(Modifier.size(32.dp).clip(RoundedCornerShape(5.dp)).background(Panel2), contentAlignment = Alignment.Center) { Text(channel.displayName.take(1)) }
                     Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(channel.displayName, color = if (channel.hidden) TextMuted else TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(channel.displayGroup, color = TextMuted, fontSize = 11.sp) }
@@ -703,7 +802,7 @@ private fun guideRange(startMs: Long, endMs: Long): String = if (startMs <= 0 ||
     }
 }
 
-@Composable private fun SetupScreen(existing: ProviderConfig?, onSave: (ProviderConfig)->Unit) {
+@Composable private fun SetupScreen(existing: ProviderConfig?, onSave: (ProviderConfig)->Unit, onCancel: (() -> Unit)? = null) {
     var type by remember(existing) { mutableStateOf(existing?.type ?: ProviderType.XTREAM) }; var name by remember(existing) { mutableStateOf(existing?.name ?: "My TV") }; var playlist by remember(existing) { mutableStateOf(existing?.playlistUrl.orEmpty()) }; var server by remember(existing) { mutableStateOf(existing?.serverUrl.orEmpty()) }; var username by remember(existing) { mutableStateOf(existing?.username.orEmpty()) }; var password by remember(existing) { mutableStateOf(existing?.password.orEmpty()) }; var epg by remember(existing) { mutableStateOf(existing?.epgUrl.orEmpty()) }; var userAgent by remember(existing) { mutableStateOf(existing?.userAgent.orEmpty()) }; var referer by remember(existing) { mutableStateOf(existing?.referer.orEmpty()) }; var validation by remember { mutableStateOf<String?>(null) }
     var additionalOpen by remember { mutableStateOf(false) }
     val providerTypeFocus = remember { FocusRequester() }
@@ -717,6 +816,7 @@ private fun guideRange(startMs: Long, endMs: Long): String = if (startMs <= 0 ||
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Focus),contentAlignment=Alignment.Center){Icon(Icons.Default.PlayArrow,null,Modifier.size(42.dp))};Spacer(Modifier.height(22.dp));Text("StreamGuide",fontSize=34.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("Live TV, organized your way.",fontSize=19.sp,color=TextMuted);Spacer(Modifier.height(34.dp));FeatureLine("Fast, remote-first TV guide");FeatureLine("Favorites and durable ordering");FeatureLine("Automatic XMLTV updates");FeatureLine("Private and local-only")
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 70.dp, vertical = 32.dp)) {
+            onCancel?.let { cancel -> TvButton(cancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(8.dp)); Text("Cancel · Back to Settings") } }
             Text(if (existing == null) "Add your playlist" else "Edit playlist", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
             Text("StreamGuide does not provide channels. Add your own provider.", color = TextMuted)
             Spacer(Modifier.height(16.dp))
@@ -759,7 +859,7 @@ private fun guideRange(startMs: Long, endMs: Long): String = if (startMs <= 0 ||
                     val valid = if (type == ProviderType.M3U) ProviderValidation.isM3uValid(playlist) else ProviderValidation.isXtreamValid(server, username, password)
                     if (!valid) validation = if (type == ProviderType.XTREAM) "Enter an HTTP or HTTPS server address, username, and password" else "Enter an HTTP/HTTPS playlist URL or choose a local file"
                     else onSave(ProviderConfig(type, name.ifBlank { "My TV" }, playlist, server, username, password, epg, userAgent, referer))
-                }, selected = true, modifier = Modifier.width(240.dp)) { Text("Finish setup") }
+                }, selected = true, modifier = Modifier.width(240.dp)) { Text(if (existing == null) "Finish setup" else "Save playlist") }
             }
         }
     }
@@ -820,12 +920,22 @@ private fun TvTextField(
     var playbackDiagnostic by remember(streamUrl) { mutableStateOf("") }
     var playbackFailed by remember(streamUrl) { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
+    var playerState by remember(streamUrl) { mutableIntStateOf(androidx.media3.common.Player.STATE_IDLE) }
+    var playbackGeneration by remember(streamUrl) { mutableIntStateOf(0) }
     var retries by remember(streamUrl) { mutableIntStateOf(0) }
     var retryJob by remember(streamUrl) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
     val player = remember(streamUrl, state.provider) {
         PlaybackPlayerFactory.create(context, state.provider)
-            .apply { setMediaItem(MediaItem.fromUri(streamUrl)); prepare(); playWhenReady = true }
+            .apply { setMediaItem(MediaItem.fromUri(streamUrl)) }
+    }
+    val reloadPlayback: () -> Unit = {
+        playbackGeneration++
+        player.stop()
+        player.clearMediaItems()
+        player.setMediaItem(MediaItem.fromUri(streamUrl))
+        player.prepare()
+        player.playWhenReady = true
     }
     val restartPlayback: (Boolean) -> Unit = { manual ->
         retryJob?.cancel()
@@ -834,27 +944,32 @@ private fun TvTextField(
         playbackFailed = false
         playbackDiagnostic = ""
         playbackInfo = "Connecting…"
-        player.prepare()
+        reloadPlayback()
         player.play()
         overlayVisible = true
     }
     val scheduleRecovery: (String) -> Unit = recovery@{ diagnostic ->
         if (retryJob?.isActive == true) return@recovery
-        val attempt = retries + 1
-        val delayMs = PlaybackRecoveryPolicy.delayForRetry(attempt)
+        val retryPlan = PlaybackRecoveryPolicy.nextRetry(retries)
         playbackDiagnostic = diagnostic
         overlayVisible = true
-        if (delayMs == null) {
+        if (retryPlan == null) {
             playbackFailed = true
             playbackInfo = "Playback unavailable"
         } else {
-            retries = attempt
-            playbackInfo = "Reconnecting · $attempt/${PlaybackRecoveryPolicy.maxAutomaticRetries}"
+            retries = retryPlan.attempt
+            playbackInfo = "Reconnecting · ${retryPlan.attempt}/${PlaybackRecoveryPolicy.maxAutomaticRetries}"
             retryJob = scope.launch {
-                kotlinx.coroutines.delay(delayMs)
-                player.prepare()
-                player.play()
+                kotlinx.coroutines.delay(retryPlan.delayMs)
                 retryJob = null
+                // Clear the guard before preparing. A failed prepare can report its
+                // error synchronously; keeping the job active would make
+                // scheduleRecovery ignore that error and leave the UI stuck at
+                // "Reconnecting · 1/3" forever.
+                if (!playbackFailed) {
+                    reloadPlayback()
+                    player.play()
+                }
             }
         }
     }
@@ -865,6 +980,7 @@ private fun TvTextField(
                 if (player.playbackState == androidx.media3.common.Player.STATE_READY) playbackInfo = if (value) "Playing" else "Paused"
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
+                playerState = playbackState
                 playbackInfo = when (playbackState) {
                     androidx.media3.common.Player.STATE_BUFFERING -> "Buffering"
                     androidx.media3.common.Player.STATE_READY -> if (player.isPlaying) "Playing" else "Paused"
@@ -872,6 +988,8 @@ private fun TvTextField(
                     else -> "Connecting…"
                 }
                 if (playbackState == androidx.media3.common.Player.STATE_READY) {
+                    retryJob?.cancel()
+                    retryJob = null
                     playbackFailed = false
                     playbackDiagnostic = ""
                 } else if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
@@ -885,10 +1003,13 @@ private fun TvTextField(
             }
         }
         player.addListener(listener)
+        // Attach the listener before the first prepare so an immediate source
+        // failure enters recovery instead of being missed.
+        reloadPlayback()
         onDispose { retryJob?.cancel(); player.removeListener(listener); player.release() }
     }
-    LaunchedEffect(playbackInfo, streamUrl) {
-        if (playbackInfo == "Buffering") {
+    LaunchedEffect(player, playerState, playbackGeneration) {
+        if (playerState == androidx.media3.common.Player.STATE_BUFFERING) {
             kotlinx.coroutines.delay(PlaybackRecoveryPolicy.bufferingTimeoutMs)
             if (player.playbackState == androidx.media3.common.Player.STATE_BUFFERING) scheduleRecovery("Buffering timed out")
         }
@@ -974,7 +1095,7 @@ private fun TvButton(
         else -> Panel2
     }
     Surface(
-        modifier.scale(focusScale).onFocusChanged { focused = it.isFocused }.focusable().combinedClickable(onClick = onClick),
+        modifier.scale(focusScale).onFocusChanged { focused = it.isFocused }.combinedClickable(onClick = onClick),
         shape = RoundedCornerShape(7.dp),
         color = bg,
         border = if (focused) BorderStroke(2.dp, Color.White) else null

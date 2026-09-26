@@ -6,7 +6,7 @@ enum class BackAction { GO_TO_LIVE_TV, GO_TO_SETTINGS, ARM_EXIT, EXIT }
 
 object BackNavigationPolicy {
     fun action(screen: AppScreen, exitArmed: Boolean): BackAction = when {
-        screen == AppScreen.DIAGNOSTICS -> BackAction.GO_TO_SETTINGS
+        screen in setOf(AppScreen.DIAGNOSTICS, AppScreen.ORGANIZE, AppScreen.EDIT_PROVIDER) -> BackAction.GO_TO_SETTINGS
         screen != AppScreen.GUIDE -> BackAction.GO_TO_LIVE_TV
         exitArmed -> BackAction.EXIT
         else -> BackAction.ARM_EXIT

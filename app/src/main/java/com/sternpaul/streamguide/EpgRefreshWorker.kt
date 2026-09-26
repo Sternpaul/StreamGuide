@@ -6,7 +6,12 @@ import androidx.work.WorkerParameters
 
 class EpgRefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = try {
-        val count = (applicationContext as StreamGuideApp).container.repository.refreshEpg()
-        if (count > 0) Result.success() else Result.success()
+        val container = (applicationContext as StreamGuideApp).container
+        if (container.store.getProvider() != null && container.store.epgAutoUpdate()) {
+            container.repository.refreshEpg()
+        }
+        Result.success()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
     } catch (_: Exception) { Result.retry() }
 }

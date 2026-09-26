@@ -52,6 +52,7 @@ data class UiState(
     val focusedGroup: String? = null,
     val optionsContext: OptionsContext = OptionsContext.CHANNEL,
     val selectedChannelId: String? = null,
+    val selectedChannelByGroup: Map<String, String> = emptyMap(),
     val playingChannelId: String? = null,
     val playingUrl: String? = null,
     val favoritesOnly: Boolean = false,
@@ -128,10 +129,14 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     private val repository = app.container.repository
     private var searchJob: Job? = null
     private var diagnosticsRequestId: Long = 0
+    private var programLoadGeneration: Long = 0
+    private var observedEpgRefresh: Long = 0
+    private var lastForegroundRefreshRequest: Long = 0
     var state by mutableStateOf(loadState())
         private set
 
     init {
+        observedEpgRefresh = store.lastEpgRefresh()
         refreshEpgDiagnostics()
         val action = RefreshPolicy.onAppStart(
             hasProvider = state.provider != null,
@@ -139,6 +144,14 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             epgOnStart = state.updateEpgOnStart,
             epgIsStale = store.lastEpgRefresh() == 0L || System.currentTimeMillis() - store.lastEpgRefresh() > state.epgHours * 3_600_000L
         )
+        requestAutomaticRefresh(action)
+    }
+
+    private fun requestAutomaticRefresh(action: StartupRefreshAction) {
+        val now = System.currentTimeMillis()
+        if (action == StartupRefreshAction.NONE || state.loading ||
+            now - lastForegroundRefreshRequest < 60_000L) return
+        lastForegroundRefreshRequest = now
         when (action) {
             StartupRefreshAction.FULL_PLAYLIST -> refresh()
             StartupRefreshAction.EPG_ONLY -> refreshEpgOnly()
@@ -210,7 +223,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     }
     fun closeOverlayMenu() { state = state.copy(overlayMenu = OverlayMenu.NONE) }
     fun focusGroup(group: String) { state = state.copy(focusedGroup = group, optionsContext = OptionsContext.GROUP) }
-    fun selectGroup(group: String) { state = state.copy(selectedGroup = group, focusedGroup = group, optionsContext = OptionsContext.GROUP, favoritesOnly = group == "Favorites", selectedChannelId = state.channels.firstOrNull { group == "All channels" || (group == "Favorites" && it.favorite) || it.displayGroup == group }?.id) }
+    fun selectGroup(group: String) { state = GuideNavigation.selectGroup(state, group) }
     fun selectChannel(id: String) { state = state.copy(selectedChannelId = id, optionsContext = OptionsContext.CHANNEL); ensurePrograms(id) }
     fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program, optionsContext = OptionsContext.CHANNEL); ensurePrograms(channelId) }
     fun ensurePrograms(channelId: String) {
@@ -220,6 +233,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             state = state.copy(programs = emptyList(), programIndex = ProgramIndex(emptyList()), programsLoadedFor = emptySet())
         }
         state = state.copy(programsLoadedFor = state.programsLoadedFor + channelId)
+        val generation = programLoadGeneration
         val timelineStart = state.timelineStart
         val timelineEnd = timelineStart + state.timelineHours * 3_600_000L
         val now = System.currentTimeMillis()
@@ -227,14 +241,19 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         val end = maxOf(timelineEnd + 3_600_000L, now + 6 * 3_600_000L)
         viewModelScope.launch {
             val programs = withContext(Dispatchers.IO) { store.getPrograms(listOf(channel.id, channel.tvgId), start, end, 2_000) }
-            if (channelId !in state.programsLoadedFor) return@launch
+            if (generation != programLoadGeneration || channelId !in state.programsLoadedFor) return@launch
             val ids = setOf(channel.id, channel.tvgId).filter(String::isNotBlank).toSet()
             val merged = state.programs.filterNot { it.channelId in ids } + programs
             state = state.copy(programs = merged, programIndex = ProgramIndex(merged))
         }
     }
     private fun resetLoadedPrograms() {
+        programLoadGeneration++
         state = state.copy(programs = emptyList(), programIndex = ProgramIndex(emptyList()), programsLoadedFor = emptySet())
+    }
+    private fun resetAndReloadPrograms(requestedChannelIds: Set<String>) {
+        resetLoadedPrograms()
+        requestedChannelIds.forEach(::ensurePrograms)
     }
     fun moveFocusedGroupToTop() = updateFocusedGroupOrder { current, group -> GroupOrdering.moveToTop(current, group) }
     fun moveFocusedGroup(delta: Int) = updateFocusedGroupOrder { current, group -> GroupOrdering.move(current, group, delta) }
@@ -250,6 +269,30 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null)
         resetLoadedPrograms()
     }
+    /** Refresh the guide window when the current half-hour changes. */
+    fun refreshGuideForCurrentTime(onResume: Boolean = false) {
+        val now = System.currentTimeMillis() / 1_800_000L * 1_800_000L
+        val refreshedAt = store.lastEpgRefresh()
+        val epgChanged = refreshedAt != observedEpgRefresh
+        if (state.timelineStart != now || epgChanged) {
+            val requestedChannelIds = state.programsLoadedFor
+            state = state.copy(timelineStart = now, selectedProgram = null)
+            resetAndReloadPrograms(requestedChannelIds)
+        }
+        observedEpgRefresh = refreshedAt
+        if (!onResume || state.loading) return
+        val lastEpgRefresh = store.lastEpgRefresh()
+        val stale = lastEpgRefresh <= 0L ||
+            System.currentTimeMillis() - lastEpgRefresh > state.epgHours * 3_600_000L
+        val action = RefreshPolicy.onAppStart(
+            hasProvider = state.provider != null,
+            playlistOnStart = state.updatePlaylistOnStart,
+            epgOnStart = state.updateEpgOnStart,
+            epgIsStale = stale
+        )
+        requestAutomaticRefresh(action)
+    }
+
     fun jumpTimelineToNow() {
         state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null)
         resetLoadedPrograms()
@@ -352,6 +395,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         viewModelScope.launch {
             runCatching { repository.refreshAll() }
                 .onSuccess { status ->
+                    observedEpgRefresh = store.lastEpgRefresh()
+                    val requestedChannelIds = state.programsLoadedFor
                     val channels = withContext(Dispatchers.IO) { store.getChannels() }
                     state = state.copy(
                         loading = false,
@@ -362,6 +407,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         status = status,
                         selectedChannelId = state.selectedChannelId ?: channels.firstOrNull()?.id
                     )
+                    resetAndReloadPrograms(requestedChannelIds)
                     refreshEpgDiagnostics()
                 }
                 .onFailure { error ->
@@ -377,6 +423,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         viewModelScope.launch {
             runCatching { repository.refreshEpg() }
                 .onSuccess { count ->
+                    observedEpgRefresh = store.lastEpgRefresh()
+                    val requestedChannelIds = state.programsLoadedFor
                     state = state.copy(
                         loading = false,
                         programs = emptyList(),
@@ -384,6 +432,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         programsLoadedFor = emptySet(),
                         status = state.status.copy(running = false, lastSuccessEpochMs = store.lastEpgRefresh(), message = "Updated $count guide programmes", programCount = count)
                     )
+                    resetAndReloadPrograms(requestedChannelIds)
                     refreshEpgDiagnostics()
                 }
                 .onFailure { error ->

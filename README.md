@@ -16,6 +16,7 @@ StreamGuide provides no channels or media. Use only sources you are authorized t
 - Transactional SQLite EPG storage with indexed time/channel queries
 - Automatic migration of existing local JSON-lines EPG data
 - Last-good guide retention when an EPG refresh fails
+- Visible guide data reloads after updates and when resuming; the timeline follows the current half-hour
 - Encrypted provider credentials
 - Local-only channel, guide and preference storage
 
@@ -32,6 +33,8 @@ VOD, series and recording are intentionally excluded.
 - Two-, three- or six-hour guide width configured globally in Settings
 - First Back press on Live TV is captured; press Back again to exit
 - Search across channel and programme titles without loading the complete EPG into memory
+- Category/channel navigation remembers the last channel in each category; Left returns to the open category, Right restores its channel, and list boundaries keep focus out of the header
+- Menus contain remote focus and restore it on dismissal; Settings subpages return to Settings
 - Strong white/blue focus for the active column; the open category and selected channel remain muted but identifiable when focus moves right
 - No duplicated channel/programme footer in Live TV, leaving room for additional guide rows
 
@@ -110,7 +113,9 @@ The matching short URL is `aftv.news/8464714`. Existing releases update in place
 
 ### Live TV
 
-- **D-pad:** move focus through categories, channels and programmes
+- **Up/Down:** move within the current list; stop at its first/last item
+- **Left/Right:** move between categories, channels and programmes; channel/category transitions restore your position
+- **Left from categories:** open the app menu
 - **Select:** activate the focused item
 - **Long Select on a channel:** toggle favorite
 - **Options/Menu:** open contextual channel or category actions

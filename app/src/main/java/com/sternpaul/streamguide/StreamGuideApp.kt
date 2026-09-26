@@ -1,6 +1,8 @@
 package com.sternpaul.streamguide
 
 import android.app.Application
+import androidx.work.Constraints
+import androidx.work.NetworkType
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -22,7 +24,9 @@ class StreamGuideApp : Application() {
             workManager.cancelUniqueWork("epg-refresh")
             return
         }
-        val request = PeriodicWorkRequestBuilder<EpgRefreshWorker>(container.store.epgHours().toLong(), TimeUnit.HOURS).build()
+        val request = PeriodicWorkRequestBuilder<EpgRefreshWorker>(container.store.epgHours().toLong(), TimeUnit.HOURS)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
         workManager.enqueueUniquePeriodicWork("epg-refresh", ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 }
