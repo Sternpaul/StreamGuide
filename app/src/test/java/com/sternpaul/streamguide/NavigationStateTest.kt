@@ -8,6 +8,7 @@ class NavigationStateTest {
     fun liveTvIsTheDefaultScreenAndMenusStartClosed() {
         val state = UiState()
         assertEquals(AppScreen.GUIDE, state.screen)
+        assertEquals("Favorites", state.selectedGroup)
         assertEquals(OverlayMenu.NONE, state.overlayMenu)
     }
 

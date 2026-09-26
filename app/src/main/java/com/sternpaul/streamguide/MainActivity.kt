@@ -89,6 +89,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 viewModel.refreshGuideForCurrentTime(onResume = true)
+                viewModel.appUpdates.onAppOpen(this@MainActivity)
                 while (true) {
                     kotlinx.coroutines.delay(60_000)
                     viewModel.refreshGuideForCurrentTime()
@@ -166,6 +167,7 @@ class MainActivity : ComponentActivity() {
                 OverlayMenu.NONE -> Unit
             }
             state.pendingPinChannelId?.let { ParentalPinDialog(vm::submitParentalPin, vm::cancelParentalPin) }
+            if (vm.appUpdates.state.showDialog) AppUpdateDialog(vm.appUpdates)
             if (state.screen != AppScreen.IMPORT_STATUS) state.error?.let { ErrorBanner(it, vm::clearError) }
             if (exitArmed) ExitConfirmationBanner()
         }
@@ -304,6 +306,8 @@ class MainActivity : ComponentActivity() {
             listState.scrollToItem(focusIndex)
             withFrameNanos { }
             channelFocus.requestFocus()
+        } else {
+            focusCategory()
         }
     }
     Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp)) {
@@ -326,7 +330,10 @@ class MainActivity : ComponentActivity() {
                 }
                 if (state.visibleChannels.isEmpty()) item {
                     if (state.channels.isEmpty()) EmptyGuide(state.provider != null, vm::refresh)
-                    else Text("No channels in this category", color = TextMuted, modifier = Modifier.padding(24.dp))
+                    else Column(Modifier.padding(24.dp)) {
+                        Text(if (state.selectedGroup == "Favorites") "No favorites yet" else "No channels in this category", color = TextMuted)
+                        if (state.selectedGroup == "Favorites") Text("Hold Select on a channel to add it to Favorites.", color = TextMuted, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -595,10 +602,51 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable private fun AppUpdateDialog(updates: AppUpdateController) {
+    val state = updates.state
+    val activity = LocalContext.current as ComponentActivity
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(state.downloading) { firstFocus.requestFocus() }
+    AlertDialog(
+        onDismissRequest = updates::dismiss,
+        title = { Text("StreamGuide ${state.release?.version.orEmpty()} is available") },
+        text = {
+            Column {
+                Text(if (state.downloading) "Downloading update · ${state.progress}%" else
+                    "Install the latest version. Your playlist, favorites and settings will be kept.")
+                if (state.downloading) LinearProgressIndicator(progress = { state.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
+                else Text("Confirm Install on the next screen, then choose Open to return to StreamGuide.", color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
+            }
+        },
+        confirmButton = {
+            if (!state.downloading) TvButton({ updates.update(activity) }, modifier = Modifier.focusRequester(firstFocus)) {
+                Text(if (state.installer != null) "Install" else "Update now")
+            }
+        },
+        dismissButton = {
+            TvButton(updates::dismiss, modifier = if (state.downloading) Modifier.focusRequester(firstFocus) else Modifier) {
+                Text(if (state.downloading) "Cancel download" else "Later")
+            }
+        }
+    )
+}
+
 @Composable private fun SettingsScreen(state: UiState, vm: MainViewModel) {
+    val updates = vm.appUpdates.state
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp, vertical = 22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             Text("Use Up/Down to choose a setting, then press Select to change it.", color = TextMuted, fontSize = 13.sp)
+        }
+        item {
+            SettingsCard("APP UPDATES · ${BuildConfig.VERSION_NAME}") {
+                SettingToggleRow(Icons.Default.SystemUpdate, "Automatic update checks",
+                    "Check when the app opens and ask before installing", updates.automatic) {
+                    vm.appUpdates.setAutomatic(!updates.automatic)
+                }
+                SettingRow(Icons.Default.Refresh, "Check for app updates",
+                    updates.message.ifBlank { "Download and install the latest StreamGuide release" }, vm.appUpdates::check)
+            }
         }
         item {
             SettingsCard("GUIDE DISPLAY") {

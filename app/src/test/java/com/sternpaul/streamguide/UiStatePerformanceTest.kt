@@ -16,7 +16,7 @@ class UiStatePerformanceTest {
             Program("epg-${index % channels.size}", if (index == 19_999) "Zebra News" else "Programme $index", startEpochMs = index.toLong(), endEpochMs = index + 1L)
         }
 
-        val results = UiState(channels = channels, programs = programmes, query = "z").visibleChannels
+        val results = UiState(screen = AppScreen.SEARCH, channels = channels, programs = programmes, query = "z").visibleChannels
 
         assertEquals(listOf("channel-9999"), results.map { it.id })
     }
@@ -39,7 +39,7 @@ class UiStatePerformanceTest {
         val programmes = (0 until 100_000).map { index ->
             Program("epg-${index % channels.size}", "Programme $index", startEpochMs = index.toLong(), endEpochMs = index + 10_000L)
         }
-        val state = UiState(channels = channels, programs = programmes)
+        val state = UiState(channels = channels, programs = programmes, selectedGroup = "All channels")
 
         val firstHundredProgrammeCounts = state.visibleChannels.take(100).map { channel ->
             state.programsFor(channel).size

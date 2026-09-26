@@ -47,12 +47,13 @@ data class UiState(
     val channels: List<Channel> = emptyList(),
     val programs: List<Program> = emptyList(),
     val programIndex: ProgramIndex = ProgramIndex(programs),
-    val selectedGroup: String = "All channels",
+    val selectedGroup: String = "Favorites",
     val groupOrder: List<String> = emptyList(),
     val focusedGroup: String? = null,
     val optionsContext: OptionsContext = OptionsContext.CHANNEL,
     val selectedChannelId: String? = null,
     val selectedChannelByGroup: Map<String, String> = emptyMap(),
+    val playbackSourceScreen: AppScreen = AppScreen.GUIDE,
     val playingChannelId: String? = null,
     val playingUrl: String? = null,
     val favoritesOnly: Boolean = false,
@@ -100,9 +101,12 @@ data class UiState(
         listOf("All channels", "Favorites") + GroupOrdering.apply(discovered, groupOrder)
     }
     val visibleChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
-        val normalizedQuery = query.trim()
+        val searching = screen == AppScreen.SEARCH ||
+            (screen == AppScreen.PLAYER && playbackSourceScreen == AppScreen.SEARCH)
+        val normalizedQuery = if (searching) query.trim() else ""
         val filtered = channels.asSequence().filterNot { it.hidden }.filter {
             when {
+                searching -> true
                 favoritesOnly || selectedGroup == "Favorites" -> it.favorite
                 selectedGroup != "All channels" -> it.displayGroup == selectedGroup
                 else -> true
@@ -124,6 +128,7 @@ data class UiState(
 }
 
 class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
+    val appUpdates = AppUpdateController(app, viewModelScope)
     private val store = app.container.store
     private val repository = app.container.repository
     private var searchJob: Job? = null
@@ -141,10 +146,9 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
 
     private fun loadState(): UiState {
         val provider = store.getProvider(); val channels = store.getChannels()
-        return UiState(
+        val initial = UiState(
             screen = if (provider == null) AppScreen.SETUP else AppScreen.GUIDE,
             provider = provider, channels = channels,
-            selectedChannelId = channels.firstOrNull()?.id,
             groupOrder = store.groupOrder(),
             timelineHours = store.timelineHours(),
             epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
@@ -152,6 +156,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             diagnosticErrors = store.diagnosticErrors(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
         )
+        return initial.copy(selectedChannelId = initial.visibleChannels.firstOrNull()?.id)
     }
 
     fun navigate(screen: AppScreen) {
@@ -279,6 +284,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     }
     fun play(id: String) {
         val channel = state.channels.firstOrNull { it.id == id } ?: return
+        if (state.screen != AppScreen.PLAYER) state = state.copy(playbackSourceScreen = state.screen)
         if (channel.locked && state.hasParentalPin) {
             state = state.copy(pendingPinChannelId = id)
         } else {
@@ -302,7 +308,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun playCatchup(channel: Channel, program: Program) {
         val url = CatchupUrl.forProgram(channel, program) ?: run { state = state.copy(error = "Catch-up is not available for this programme"); return }
         if (channel.locked && state.hasParentalPin) { state = state.copy(error = "Unlock the live channel before using catch-up"); return }
-        state = state.copy(playingChannelId = channel.id, playingUrl = url, selectedChannelId = channel.id, screen = AppScreen.PLAYER)
+        state = state.copy(playingChannelId = channel.id, playingUrl = url, selectedChannelId = channel.id,
+            playbackSourceScreen = if (state.screen == AppScreen.PLAYER) state.playbackSourceScreen else state.screen, screen = AppScreen.PLAYER)
     }
     fun playAdjacent(delta: Int) {
         val list = state.visibleChannels
@@ -310,7 +317,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         val current = list.indexOfFirst { it.id == state.playingChannelId }.let { if (it < 0) 0 else it }
         play(list[(current + delta).coerceIn(0, list.lastIndex)].id)
     }
-    fun closePlayer() { state = state.copy(screen = AppScreen.GUIDE) }
+    fun closePlayer() { state = state.copy(screen = state.playbackSourceScreen) }
     fun playPreviousChannel() { state.recentChannelIds.getOrNull(1)?.let(::play) }
     fun addToMultiview(id: String) {
         if (state.channels.firstOrNull { it.id == id }?.locked == true) { state = state.copy(error = "Unlock this channel before adding it to Multiview"); return }

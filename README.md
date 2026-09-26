@@ -26,7 +26,7 @@ VOD, series and recording are intentionally excluded.
 
 ### Live TV and navigation
 
-- Live TV opens as the default screen
+- Live TV opens in Favorites by default
 - Left application menu: Live TV, Search, Multiview and Settings
 - Remote Options/Menu key opens contextual channel or category actions
 - Channel actions: favorite, move, move to top, lock and add to Multiview
@@ -34,7 +34,8 @@ VOD, series and recording are intentionally excluded.
 - Persistent favorites, custom names, custom groups, hidden channels and manual ordering
 - Two-, three- or six-hour guide width configured globally in Settings
 - First Back press on Live TV is captured; press Back again to exit
-- Search across channel and programme titles without loading the complete EPG into memory
+- Search across channel and programme titles in every category, regardless of the selected category or Favorites filter, without loading the complete EPG into memory
+- Back from playback started in Search returns to the search results
 - Category/channel navigation remembers the last channel in each category; Left returns to the open category, Right restores its channel, and list boundaries keep focus out of the header
 - Menus contain remote focus and restore it on dismissal; Settings subpages return to Settings
 - Strong white/blue focus for the active column; the open category and selected channel remain muted but identifiable when focus moves right
@@ -93,6 +94,14 @@ EPG writes use SQLite write-ahead logging, and refresh requests are serialized s
 
 Actual simultaneous decoder capacity depends on the Fire TV model and provider codecs.
 
+## In-app updates
+
+From version 0.7.3 onward, StreamGuide checks for new releases when it opens and offers an update. You can turn **Automatic update checks** off or use **Check for app updates** in Settings. Updates download inside the app and preserve your playlist, favorites and settings.
+
+The first time, allow **Install unknown apps** for StreamGuide in Fire TV Settings. Confirm **Install** in the system installer, then select **Open** to return to StreamGuide. Fire OS controls installation and reopening; silent installation/restart is not assumed. Downloaded installers are checked for the correct app, newer version and matching release signing certificate before installation.
+
+Install 0.7.3 using Downloader once to enable in-app updates for future releases.
+
 ## Download and install
 
 Download the latest signed APK from [GitHub Releases](https://github.com/Sternpaul/StreamGuide/releases/latest).
@@ -130,7 +139,7 @@ The matching short URL is `aftv.news/8464714`. Existing releases update in place
 - **Left/Right:** seek backward or forward when supported
 - **Play/Pause:** pause or resume
 - **Select:** show/hide information or retry failed playback
-- **Back:** return to Live TV
+- **Back:** return to Live TV or the search results you opened playback from
 
 ## Settings
 
