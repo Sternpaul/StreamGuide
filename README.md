@@ -81,6 +81,7 @@ Settings contains a clearly labeled **Diagnostics** entry. Its remote-focusable 
 - Last successful EPG refresh, EPG duration and full-update duration
 - Last retained update warning
 - A persistent, clearable error log for playlist, EPG, diagnostics and playback failures; credentials are redacted
+- **View error log** opens all recorded entries in a full-screen view; Up/Down scroll through complete messages and Back returns to Diagnostics
 
 EPG writes use SQLite write-ahead logging, and refresh requests are serialized so guide reads and duplicate refresh triggers do not block one another. Hidden channels are excluded from the channel-coverage denominator, but their IDs remain valid when calculating whether imported programmes are mapped.
 

@@ -18,6 +18,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -675,6 +677,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun DiagnosticsScreen(state: UiState, vm: MainViewModel) {
+    var errorLogOpen by remember { mutableStateOf(false) }
+    if (errorLogOpen) {
+        DiagnosticErrorLog(state.diagnosticErrors, vm::clearDiagnosticErrors) { errorLogOpen = false }
+    }
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstFocus.requestFocus(); vm.refreshEpgDiagnostics() }
     LazyColumn(
@@ -703,6 +709,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         item {
+            SettingRow(Icons.Default.History, "View error log", "${state.diagnosticErrors.size} recorded errors") { errorLogOpen = true }
+        }
+        item {
             SettingsCard("EPG MAPPING") {
                 when {
                     state.diagnosticsLoading && state.epgDiagnostics == null -> Text("Calculating EPG mapping…", color = TextMuted, modifier = Modifier.padding(16.dp))
@@ -711,9 +720,6 @@ class MainActivity : ComponentActivity() {
                     else -> Text("No EPG mapping diagnostics available yet.", color = TextMuted, modifier = Modifier.padding(16.dp))
                 }
             }
-        }
-        item {
-            SettingsCard("ERROR LOG") { DiagnosticErrorLog(state.diagnosticErrors, vm::clearDiagnosticErrors) }
         }
         item {
             TvButton({ vm.navigate(AppScreen.SETTINGS) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(7.dp)); Text("Back to Settings") }
@@ -758,16 +764,61 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun DiagnosticErrorLog(entries: List<DiagnosticLogEntry>, onClear: () -> Unit) {
-    Column(Modifier.padding(16.dp)) {
-        if (entries.isEmpty()) {
-            Text("No recorded errors.", color = TextMuted, fontSize = 12.sp)
-        } else {
-            entries.take(20).forEach { entry ->
-                Text("${diagnosticTime(entry.timestampEpochMs)} · ${entry.area}", color = Color(0xFFFF9AA5), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                Text(entry.message, fontSize = 12.sp, modifier = Modifier.padding(bottom = 9.dp))
+@Composable private fun DiagnosticErrorLog(entries: List<DiagnosticLogEntry>, onClear: () -> Unit, onClose: () -> Unit) {
+    val scroll = rememberScrollState()
+    val logFocus = remember { FocusRequester() }
+    val backFocus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    val scrollStep = with(LocalDensity.current) { 80.dp.toPx() }
+    var focused by remember { mutableStateOf(false) }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        LaunchedEffect(Unit) { logFocus.requestFocus() }
+        Column(Modifier.fillMaxSize().background(Bg).padding(horizontal = 32.dp, vertical = 22.dp)) {
+            Row(Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) logFocus.requestFocus()
+                    true
+                } else false
+            }, verticalAlignment = Alignment.CenterVertically) {
+                TvButton(onClose, modifier = Modifier.focusRequester(backFocus)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(7.dp)); Text("Back")
+                }
+                Spacer(Modifier.width(18.dp))
+                Text("Error log", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                if (entries.isNotEmpty()) {
+                    TvButton({ onClear(); logFocus.requestFocus() }, danger = true) {
+                        Icon(Icons.Default.DeleteSweep, null); Spacer(Modifier.width(7.dp)); Text("Clear log")
+                    }
+                }
             }
-            TvButton(onClear, danger = true) { Icon(Icons.Default.DeleteSweep, null); Spacer(Modifier.width(7.dp)); Text("Clear error log") }
+            Spacer(Modifier.height(14.dp))
+            // A single focusable viewport scrolls by pixels, so even an entry taller
+            // than the screen can be read without focus skipping to its end.
+            Column(Modifier.weight(1f).fillMaxWidth()
+                .border(if (focused) 2.dp else 0.dp, if (focused) Focus else Color.Transparent, RoundedCornerShape(8.dp))
+                .focusRequester(logFocus)
+                .onFocusChanged { focused = it.isFocused }
+                .onPreviewKeyEvent { event ->
+                    val key = event.nativeKeyEvent.keyCode
+                    if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                        if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                            if (key == KeyEvent.KEYCODE_DPAD_UP && scroll.value == 0) backFocus.requestFocus()
+                            else scope.launch { scroll.scrollBy(if (key == KeyEvent.KEYCODE_DPAD_UP) -scrollStep else scrollStep) }
+                        }
+                        true
+                    } else false
+                }
+                .focusable()
+                .verticalScroll(scroll)
+                .padding(18.dp)) {
+                if (entries.isEmpty()) Text("No recorded errors.", color = TextMuted)
+                entries.forEachIndexed { index, entry ->
+                    Text("${diagnosticTime(entry.timestampEpochMs)} · ${entry.area}", color = Color(0xFFFF9AA5), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(entry.message, fontSize = 16.sp, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
+                    if (index < entries.lastIndex) HorizontalDivider(Modifier.padding(bottom = 16.dp), color = Panel2)
+                }
+            }
         }
     }
 }
