@@ -88,28 +88,30 @@ data class UiState(
     private val visibleFavoriteCount: Int by lazy(LazyThreadSafetyMode.NONE) {
         channels.count { it.favorite && !it.hidden }
     }
-    private val visibleChannelCount: Int by lazy(LazyThreadSafetyMode.NONE) {
-        channels.count { !it.hidden }
+    val recentChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
+        val available = channels.filterNot { it.hidden }.associateBy { it.id }
+        recentChannelIds.distinct().mapNotNull(available::get).take(RecentChannels.limit)
     }
     fun channelCountForGroup(group: String): Int = when (group) {
-        "All channels" -> visibleChannelCount
         "Favorites" -> visibleFavoriteCount
+        "Recently watched" -> recentChannels.size
         else -> visibleGroupCounts[group] ?: 0
     }
     val groups: List<String> by lazy(LazyThreadSafetyMode.NONE) {
-        val discovered = channels.filterNot { it.hidden }.map { it.displayGroup }.distinct().sorted()
-        listOf("All channels", "Favorites") + GroupOrdering.apply(discovered, groupOrder)
+        val discovered = channels.filterNot { it.hidden }.map { it.displayGroup }
+            .filterNot { it in setOf("Favorites", "Recently watched", "All channels") }.distinct().sorted()
+        listOf("Favorites", "Recently watched") + GroupOrdering.apply(discovered, groupOrder)
     }
     val visibleChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
         val searching = screen == AppScreen.SEARCH ||
             (screen == AppScreen.PLAYER && playbackSourceScreen == AppScreen.SEARCH)
+        if (!searching && selectedGroup == "Recently watched") return@lazy recentChannels
         val normalizedQuery = if (searching) query.trim() else ""
         val filtered = channels.asSequence().filterNot { it.hidden }.filter {
             when {
                 searching -> true
                 favoritesOnly || selectedGroup == "Favorites" -> it.favorite
-                selectedGroup != "All channels" -> it.displayGroup == selectedGroup
-                else -> true
+                else -> it.displayGroup == selectedGroup
             }
         }.filter { channel ->
             normalizedQuery.isBlank() ||
@@ -132,6 +134,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     private val store = app.container.store
     private val repository = app.container.repository
     private var searchJob: Job? = null
+    private var playbackChannelIds: List<String> = emptyList()
     private var diagnosticsRequestId: Long = 0
     private var programLoadGeneration: Long = 0
     private var observedEpgRefresh: Long = 0
@@ -244,8 +247,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun moveFocusedGroup(delta: Int) = updateFocusedGroupOrder { current, group -> GroupOrdering.move(current, group, delta) }
     private fun updateFocusedGroupOrder(change: (List<String>, String) -> List<String>) {
         val group = state.focusedGroup ?: state.selectedGroup
-        if (group == "All channels" || group == "Favorites") return
-        val providerGroups = state.groups.filterNot { it == "All channels" || it == "Favorites" }
+        if (group in setOf("Favorites", "Recently watched")) return
+        val providerGroups = state.groups.filterNot { it in setOf("Favorites", "Recently watched") }
         val order = change(providerGroups, group)
         store.saveGroupOrder(order)
         state = state.copy(groupOrder = order, overlayMenu = OverlayMenu.NONE)
@@ -288,14 +291,26 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         if (channel.locked && state.hasParentalPin) {
             state = state.copy(pendingPinChannelId = id)
         } else {
-            val recent = (listOf(id) + state.recentChannelIds.filter { it != id }).take(30)
-            store.saveRecentChannelIds(recent)
-            state = state.copy(playingChannelId = id, playingUrl = channel.url, selectedChannelId = id, screen = AppScreen.PLAYER, recentChannelIds = recent)
+            startPlayback(channel, channel.url)
         }
+    }
+    private fun startPlayback(channel: Channel, url: String) {
+        if (state.screen != AppScreen.PLAYER) {
+            // Keep channel surfing stable while watching changes the recent order.
+            playbackChannelIds = state.visibleChannels.map { it.id }
+        }
+        val recent = RecentChannels.record(state.recentChannelIds, channel.id)
+        store.saveRecentChannelIds(recent)
+        state = state.copy(playingChannelId = channel.id, playingUrl = url, selectedChannelId = channel.id,
+            pendingPinChannelId = null, recentChannelIds = recent,
+            playbackSourceScreen = if (state.screen == AppScreen.PLAYER) state.playbackSourceScreen else state.screen,
+            screen = AppScreen.PLAYER)
     }
     fun submitParentalPin(pin: String) {
         val id = state.pendingPinChannelId ?: return
-        state = if (store.verifyParentalPin(pin)) state.copy(pendingPinChannelId = null, playingChannelId = id, playingUrl = state.channels.firstOrNull { it.id == id }?.url, selectedChannelId = id, screen = AppScreen.PLAYER) else state.copy(error = "Incorrect parental PIN")
+        if (!store.verifyParentalPin(pin)) { state = state.copy(error = "Incorrect parental PIN"); return }
+        val channel = state.channels.firstOrNull { it.id == id } ?: run { cancelParentalPin(); return }
+        startPlayback(channel, channel.url)
     }
     fun cancelParentalPin() { state = state.copy(pendingPinChannelId = null) }
     fun setParentalPin(pin: String) {
@@ -308,14 +323,14 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun playCatchup(channel: Channel, program: Program) {
         val url = CatchupUrl.forProgram(channel, program) ?: run { state = state.copy(error = "Catch-up is not available for this programme"); return }
         if (channel.locked && state.hasParentalPin) { state = state.copy(error = "Unlock the live channel before using catch-up"); return }
-        state = state.copy(playingChannelId = channel.id, playingUrl = url, selectedChannelId = channel.id,
-            playbackSourceScreen = if (state.screen == AppScreen.PLAYER) state.playbackSourceScreen else state.screen, screen = AppScreen.PLAYER)
+        startPlayback(channel, url)
     }
     fun playAdjacent(delta: Int) {
-        val list = state.visibleChannels
+        val available = state.channels.filterNot { it.hidden }.map { it.id }.toHashSet()
+        val list = playbackChannelIds.filter { it in available }
         if (list.isEmpty()) return
-        val current = list.indexOfFirst { it.id == state.playingChannelId }.let { if (it < 0) 0 else it }
-        play(list[(current + delta).coerceIn(0, list.lastIndex)].id)
+        val current = list.indexOf(state.playingChannelId).coerceAtLeast(0)
+        play(list[(current + delta).coerceIn(0, list.lastIndex)])
     }
     fun closePlayer() { state = state.copy(screen = state.playbackSourceScreen) }
     fun playPreviousChannel() { state.recentChannelIds.getOrNull(1)?.let(::play) }

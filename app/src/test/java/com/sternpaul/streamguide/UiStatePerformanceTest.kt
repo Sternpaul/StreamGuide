@@ -39,7 +39,7 @@ class UiStatePerformanceTest {
         val programmes = (0 until 100_000).map { index ->
             Program("epg-${index % channels.size}", "Programme $index", startEpochMs = index.toLong(), endEpochMs = index + 10_000L)
         }
-        val state = UiState(channels = channels, programs = programmes, selectedGroup = "All channels")
+        val state = UiState(channels = channels, programs = programmes, selectedGroup = "Other")
 
         val firstHundredProgrammeCounts = state.visibleChannels.take(100).map { channel ->
             state.programsFor(channel).size

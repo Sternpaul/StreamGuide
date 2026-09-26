@@ -27,6 +27,8 @@ VOD, series and recording are intentionally excluded.
 ### Live TV and navigation
 
 - Live TV opens in Favorites by default
+- Categories start with Favorites, then Recently watched, followed by provider categories; there is no All channels category
+- Recently watched remembers up to 30 channels across app launches, newest first; hidden or removed channels are excluded
 - Left application menu: Live TV, Search, Multiview and Settings
 - Remote Options/Menu key opens contextual channel or category actions
 - Channel actions: favorite, move, move to top, lock and add to Multiview

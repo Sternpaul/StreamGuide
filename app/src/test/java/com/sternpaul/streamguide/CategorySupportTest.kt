@@ -16,7 +16,7 @@ class CategorySupportTest {
             selectedGroup = "UK News"
         )
 
-        assertEquals(listOf("All channels", "Favorites", "Sports", "UK News"), state.groups)
+        assertEquals(listOf("Favorites", "Recently watched", "Sports", "UK News"), state.groups)
         assertEquals(listOf("news-1", "news-2"), state.visibleChannels.map { it.id })
     }
 }

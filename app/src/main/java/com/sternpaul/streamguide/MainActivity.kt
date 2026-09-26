@@ -225,7 +225,7 @@ class MainActivity : ComponentActivity() {
     val channel = state.selectedChannelId?.let { id -> state.channels.firstOrNull { it.id == id } }
     val group = state.focusedGroup ?: state.selectedGroup
     val firstFocus = remember { FocusRequester() }
-    val hasGroupAction = state.optionsContext == OptionsContext.GROUP && group !in setOf("All channels", "Favorites")
+    val hasGroupAction = state.optionsContext == OptionsContext.GROUP && group !in setOf("Favorites", "Recently watched")
     LaunchedEffect(state.optionsContext, channel?.id, group) { if (state.optionsContext == OptionsContext.CHANNEL && channel != null || hasGroupAction) firstFocus.requestFocus() }
     OverlayMenuPanel(Alignment.CenterEnd, if (state.optionsContext == OptionsContext.GROUP) "CATEGORY OPTIONS" else "CHANNEL OPTIONS", Modifier.width(350.dp), vm::closeOverlayMenu) {
         if (state.optionsContext == OptionsContext.GROUP) {
@@ -331,7 +331,7 @@ class MainActivity : ComponentActivity() {
                 if (state.visibleChannels.isEmpty()) item {
                     if (state.channels.isEmpty()) EmptyGuide(state.provider != null, vm::refresh)
                     else Column(Modifier.padding(24.dp)) {
-                        Text(if (state.selectedGroup == "Favorites") "No favorites yet" else "No channels in this category", color = TextMuted)
+                        Text(when (state.selectedGroup) { "Favorites" -> "No favorites yet"; "Recently watched" -> "Your watched channels will appear here"; else -> "No channels in this category" }, color = TextMuted)
                         if (state.selectedGroup == "Favorites") Text("Hold Select on a channel to add it to Favorites.", color = TextMuted, fontSize = 13.sp)
                     }
                 }
@@ -377,7 +377,7 @@ class MainActivity : ComponentActivity() {
                         }
                         .onFocusChanged { if (it.isFocused) vm.focusGroup(group) }
                 ) {
-                    Icon(if(group=="Favorites") Icons.Default.Star else Icons.Default.Folder, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
+                    Icon(when(group) { "Favorites" -> Icons.Default.Star; "Recently watched" -> Icons.Default.History; else -> Icons.Default.Folder }, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(group, Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis); Text(count.toString(), color=TextMuted, fontSize=12.sp)
                 }
             }
         }
