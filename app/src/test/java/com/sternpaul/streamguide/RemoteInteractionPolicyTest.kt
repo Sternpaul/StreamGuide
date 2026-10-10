@@ -38,6 +38,15 @@ class RemoteInteractionPolicyTest {
     }
 
     @Test
+    fun guidePreviewKeepsTheDisplayAwakeOnlyWhileAStreamRuns() {
+        assertTrue(ScreenAwakePolicy.keepScreenOn(AppScreen.GUIDE, playbackActive = true))
+        assertFalse(ScreenAwakePolicy.keepScreenOn(AppScreen.GUIDE, playbackActive = false))
+        assertFalse(ScreenAwakePolicy.keepScreenOn(AppScreen.SETTINGS, playbackActive = true))
+        assertTrue(ScreenAwakePolicy.hostsPlayback(AppScreen.PLAYER))
+        assertFalse(ScreenAwakePolicy.hostsPlayback(AppScreen.MULTIVIEW))
+    }
+
+    @Test
     fun playerRemoteKeysMapToRealPlaybackActions() {
         assertEquals(PlayerRemoteAction.SEEK_BACK, PlayerRemotePolicy.action(KeyEvent.KEYCODE_DPAD_LEFT))
         assertEquals(PlayerRemoteAction.SEEK_FORWARD, PlayerRemotePolicy.action(KeyEvent.KEYCODE_DPAD_RIGHT))

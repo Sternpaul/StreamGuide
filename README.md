@@ -26,47 +26,41 @@ VOD, series and recording are intentionally excluded.
 
 ### Live TV and navigation
 
-- Live TV opens in Favorites by default
-- Categories start with Favorites, then Recently watched, followed by provider categories; there is no All channels category
+- Live TV fills the whole screen: programme details top-left, the running channel as a live picture top-right, and the guide grid below
+- The guide is navigated with a row/time cursor, not screen geometry: Up/Down keep the time, Left/Right step through programmes and scroll the timeline up to seven days ahead
+- A red line marks the current time; Back returns a scrolled guide to now
+- Left at the start of the timeline slides in the categories; Left again shows Live TV, Search, Multiview and Settings
+- Live TV opens in Favorites by default; categories start with Favorites, then Recently watched, followed by provider categories
 - Recently watched remembers up to 30 channels across app launches, newest first; hidden or removed channels are excluded
-- Left application menu: Live TV, Search, Multiview and Settings
 - Remote Options/Menu key opens contextual channel or category actions
 - Channel actions: favorite, move, move to top, lock and add to Multiview
 - Category ordering with move up, move down and move to top
 - Persistent favorites, custom names, custom groups, hidden channels and manual ordering
 - Two-, three- or six-hour guide width configured globally in Settings
 - First Back press on Live TV is captured; press Back again to exit
-- Search across channel and programme titles in every category, regardless of the selected category or Favorites filter, without loading the complete EPG into memory
-- Back from playback started in Search returns to the search results
-- Category/channel navigation remembers the last channel in each category; Left returns to the open category, Right restores its channel, and list boundaries keep focus out of the header
-- Menus contain remote focus and restore it on dismissal; Settings subpages return to Settings
-- Strong white/blue focus for the active column; the open category and selected channel remain muted but identifiable when focus moves right
-- No duplicated channel/programme footer in Live TV, leaving room for additional guide rows
+- Search across channel and programme titles in every category without loading the complete EPG into memory
+- Each category remembers its last channel
 
 ### Playback
 
-- Full-screen Media3/ExoPlayer playback
-- Playback keeps the display awake, preventing the Fire TV screensaver/standby timer during a stream
-- Up/Down changes channel
-- Left seeks back 10 seconds when the stream is seekable
-- Right seeks forward 30 seconds when the stream is seekable
-- Remote Play/Pause media key controls playback
-- Select shows or hides the playback overlay and retries after a terminal playback failure
-- Bounded automatic reconnect attempts with buffering timeout and error-code diagnostics
-- Previous/recent channel state is retained locally
+- Full-screen Media3/ExoPlayer playback from one shared player
+- Back returns to the guide without stopping the stream: it continues in the guide's top-right corner, and OK on the same channel returns to full screen without reconnecting
+- Up/Down changes channel with an info banner (now/next, progress, clock)
+- OK opens a see-through channel list over the picture; Left inside the list switches category
+- Left/Right seek when the stream is seekable; on a non-seekable live stream Left opens the channel list
+- Remote Play/Pause media key controls playback, also from the guide
+- Bounded automatic reconnect attempts with buffering timeout and error-code diagnostics; OK retries after a terminal failure
+- Playback keeps the display awake and stops when the app leaves the foreground
 - Provider headers are applied to live, catch-up and Multiview playback
 
-Seeking cannot work on a provider stream that exposes no seekable live window or archive.
+Playback pauses while Search, Multiview or Settings are open and resumes in the guide.
 
 ### Guide and catch-up
 
-- Dense, remote-focusable EPG timeline
-- Current programme progress and times in the guide cells
-- Selecting a live programme starts its channel directly without adding a permanent on-screen Watch button
+- Dense EPG timeline with programme titles; times, duration, description and the following programme appear in the details area
+- OK on a programme starts its channel
 - Existing M3U catch-up templates are expanded from programme start and duration
 - Selecting an eligible past programme starts catch-up directly; unsupported programmes add no UI
-
-No additional catch-up browser or permanent catch-up buttons have been added. A future archive browser should remain contextual to the existing timeline rather than occupy space in Live TV.
 
 ### EPG diagnostics
 
@@ -127,21 +121,23 @@ The matching short URL is `aftv.news/8464714`. Existing releases update in place
 
 ### Live TV
 
-- **Up/Down:** move within the current list; stop at its first/last item
-- **Left/Right:** move between categories, channels and programmes; channel/category transitions restore your position
-- **Left from categories:** open the app menu
-- **Select:** activate the focused item
-- **Long Select on a channel:** toggle favorite
-- **Options/Menu:** open contextual channel or category actions
-- **Back:** close an open overlay; on Live TV, press twice to exit
+- **Up/Down:** previous/next channel row
+- **Left/Right:** previous/next programme; scrolls the timeline at its edges
+- **Left at the start:** categories, then the app destinations
+- **Rewind/Fast-forward:** page up/down
+- **Select:** watch the channel (or catch-up for an eligible past programme)
+- **Long Select:** toggle favorite
+- **Play/Pause:** pause or resume the running channel
+- **Options/Menu:** channel or category actions
+- **Back:** close the categories, return to now, then press twice to exit
 
 ### Playback
 
 - **Up/Down:** previous or next channel
-- **Left/Right:** seek backward or forward when supported
+- **Select:** channel list; **Up/Down** to choose, **Select** to switch, **Left** for categories
+- **Left/Right:** seek when supported
 - **Play/Pause:** pause or resume
-- **Select:** show/hide information or retry failed playback
-- **Back:** return to Live TV or the search results you opened playback from
+- **Back:** close the list, or return to the guide with the channel still playing
 
 ## Settings
 

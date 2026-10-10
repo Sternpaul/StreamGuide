@@ -23,13 +23,17 @@ object NavigationPolicy {
     fun onOptionsPressed(screen: AppScreen): OverlayMenu = if (screen == AppScreen.GUIDE) OverlayMenu.CHANNEL else OverlayMenu.NONE
 }
 
-class ProgramIndex(programs: List<Program>) {
-    private val byChannelId: Map<String, List<Program>> = programs.groupBy { it.channelId }
+class ProgramIndex private constructor(private val byChannelId: Map<String, List<Program>>) {
+    constructor(programs: List<Program>) : this(programs.groupBy { it.channelId })
+
+    // Rows ask for the same channel on every recomposition; handing back the same
+    // list instance lets unchanged rows skip.
+    private val perChannel = HashMap<String, List<Program>>()
 
     private fun channelIds(channel: Channel): List<String> = listOf(channel.id, channel.tvgId).filter { it.isNotBlank() }.distinct()
 
-    fun forChannel(channel: Channel): List<Program> {
-        return channelIds(channel).asSequence()
+    fun forChannel(channel: Channel): List<Program> = perChannel.getOrPut(channel.id + "\u0000" + channel.tvgId) {
+        channelIds(channel).asSequence()
             .flatMap { byChannelId[it].orEmpty().asSequence() }
             .distinct()
             .sortedBy { it.startEpochMs }
@@ -39,6 +43,34 @@ class ProgramIndex(programs: List<Program>) {
     fun containsTitle(channel: Channel, query: String): Boolean = channelIds(channel).any { id ->
         byChannelId[id].orEmpty().any { it.title.contains(query, ignoreCase = true) }
     }
+
+    /** Swaps the programmes of [channelIds] without regrouping everything else. */
+    fun replacing(channelIds: Set<String>, programs: List<Program>): ProgramIndex =
+        ProgramIndex(byChannelId - channelIds + programs.groupBy { it.channelId })
+}
+
+/** Single-entry cache: UiState is copied on every change, its derived lists rarely change. */
+private class Memo<T> {
+    private var key: List<Any?>? = null
+    private var value: T? = null
+    @Suppress("UNCHECKED_CAST")
+    @Synchronized fun get(key: List<Any?>, compute: () -> T): T {
+        if (this.key != key) { value = compute(); this.key = key }
+        return value as T
+    }
+}
+private val groupCountsMemo = Memo<Map<String, Int>>()
+private val favoriteCountMemo = Memo<Int>()
+private val recentChannelsMemo = Memo<List<Channel>>()
+private val groupsMemo = Memo<List<String>>()
+private val visibleChannelsMemo = Memo<List<Channel>>()
+private val channelsByIdMemo = Memo<Map<String, Channel>>()
+
+/** Guide focus that must survive leaving the screen but must not churn UiState. */
+class GuideUiState {
+    /** Time the programme cursor sits on; null follows the current time. */
+    var cursorTime by mutableStateOf<Long?>(null)
+    var firstRow = 0
 }
 
 data class UiState(
@@ -83,14 +115,19 @@ data class UiState(
     val overlayMenu: OverlayMenu = OverlayMenu.NONE
 ) {
     private val visibleGroupCounts: Map<String, Int> by lazy(LazyThreadSafetyMode.NONE) {
-        channels.asSequence().filterNot { it.hidden }.groupingBy { it.displayGroup }.eachCount()
+        groupCountsMemo.get(listOf(channels)) { channels.asSequence().filterNot { it.hidden }.groupingBy { it.displayGroup }.eachCount() }
     }
     private val visibleFavoriteCount: Int by lazy(LazyThreadSafetyMode.NONE) {
-        channels.count { it.favorite && !it.hidden }
+        favoriteCountMemo.get(listOf(channels)) { channels.count { it.favorite && !it.hidden } }
+    }
+    val channelsById: Map<String, Channel> by lazy(LazyThreadSafetyMode.NONE) {
+        channelsByIdMemo.get(listOf(channels)) { channels.associateBy { it.id } }
     }
     val recentChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
-        val available = channels.filterNot { it.hidden }.associateBy { it.id }
-        recentChannelIds.distinct().mapNotNull(available::get).take(RecentChannels.limit)
+        recentChannelsMemo.get(listOf(channels, recentChannelIds)) {
+            val available = channels.filterNot { it.hidden }.associateBy { it.id }
+            recentChannelIds.distinct().mapNotNull(available::get).take(RecentChannels.limit)
+        }
     }
     fun channelCountForGroup(group: String): Int = when (group) {
         "Favorites" -> visibleFavoriteCount
@@ -98,35 +135,42 @@ data class UiState(
         else -> visibleGroupCounts[group] ?: 0
     }
     val groups: List<String> by lazy(LazyThreadSafetyMode.NONE) {
-        val discovered = channels.filterNot { it.hidden }.map { it.displayGroup }
-            .filterNot { it in setOf("Favorites", "Recently watched", "All channels") }.distinct().sorted()
-        listOf("Favorites", "Recently watched") + GroupOrdering.apply(discovered, groupOrder)
+        groupsMemo.get(listOf(channels, groupOrder)) {
+            val discovered = channels.filterNot { it.hidden }.map { it.displayGroup }
+                .filterNot { it in setOf("Favorites", "Recently watched", "All channels") }.distinct().sorted()
+            listOf("Favorites", "Recently watched") + GroupOrdering.apply(discovered, groupOrder)
+        }
     }
     val visibleChannels: List<Channel> by lazy(LazyThreadSafetyMode.NONE) {
         val searching = screen == AppScreen.SEARCH ||
             (screen == AppScreen.PLAYER && playbackSourceScreen == AppScreen.SEARCH)
         if (!searching && selectedGroup == "Recently watched") return@lazy recentChannels
         val normalizedQuery = if (searching) query.trim() else ""
-        val filtered = channels.asSequence().filterNot { it.hidden }.filter {
-            when {
-                searching -> true
-                favoritesOnly || selectedGroup == "Favorites" -> it.favorite
-                else -> it.displayGroup == selectedGroup
+        val key = listOf(channels, searching, selectedGroup, favoritesOnly, normalizedQuery, sort,
+            if (normalizedQuery.isBlank()) null else programSearchChannelIds,
+            if (normalizedQuery.isBlank()) null else programIndex)
+        visibleChannelsMemo.get(key) {
+            val filtered = channels.asSequence().filterNot { it.hidden }.filter {
+                when {
+                    searching -> true
+                    favoritesOnly || selectedGroup == "Favorites" -> it.favorite
+                    else -> it.displayGroup == selectedGroup
+                }
+            }.filter { channel ->
+                normalizedQuery.isBlank() ||
+                    channel.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                    listOf(channel.id, channel.tvgId).any { it.isNotBlank() && it in programSearchChannelIds } ||
+                    programIndex.containsTitle(channel, normalizedQuery)
+            }.toList()
+            when (sort) {
+                ChannelSort.MANUAL -> filtered.sortedWith(ChannelOrdering.manual)
+                ChannelSort.ALPHABETICAL -> filtered.sortedWith(ChannelOrdering.alphabetical)
+                ChannelSort.PROVIDER -> filtered.sortedWith(ChannelOrdering.provider)
             }
-        }.filter { channel ->
-            normalizedQuery.isBlank() ||
-                channel.displayName.contains(normalizedQuery, ignoreCase = true) ||
-                listOf(channel.id, channel.tvgId).any { it.isNotBlank() && it in programSearchChannelIds } ||
-                programIndex.containsTitle(channel, normalizedQuery)
-        }.toList()
-        when (sort) {
-            ChannelSort.MANUAL -> filtered.sortedWith(ChannelOrdering.manual)
-            ChannelSort.ALPHABETICAL -> filtered.sortedWith(ChannelOrdering.alphabetical)
-            ChannelSort.PROVIDER -> filtered.sortedWith(ChannelOrdering.provider)
         }
     }
     fun programsFor(channel: Channel): List<Program> = programIndex.forChannel(channel)
-    val playingChannel: Channel? get() = channels.firstOrNull { it.id == playingChannelId }
+    val playingChannel: Channel? get() = playingChannelId?.let(channelsById::get)
 }
 
 class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
@@ -138,11 +182,17 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     private var diagnosticsRequestId: Long = 0
     private var programLoadGeneration: Long = 0
     private var observedEpgRefresh: Long = 0
+    private var playbackListKey: String? = null
+    private var timelineHome: Long = 0
+    private var loadedRangeStart: Long = Long.MAX_VALUE
+    private var loadedRangeEnd: Long = Long.MIN_VALUE
+    val guide = GuideUiState()
     var state by mutableStateOf(loadState())
         private set
 
     init {
         observedEpgRefresh = store.lastEpgRefresh()
+        timelineHome = state.timelineStart
         refreshEpgDiagnostics()
         // The RESUMED lifecycle callback is the single startup refresh trigger.
     }
@@ -198,7 +248,6 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         store.clearDiagnosticErrors()
         state = state.copy(diagnosticErrors = emptyList())
     }
-    fun toggleAppMenu() { state = state.copy(overlayMenu = if (state.overlayMenu == OverlayMenu.APP) OverlayMenu.NONE else OverlayMenu.APP) }
     fun toggleChannelMenu() {
         if (state.screen != AppScreen.GUIDE) return
         state = state.copy(overlayMenu = if (state.overlayMenu == OverlayMenu.CHANNEL) OverlayMenu.NONE else OverlayMenu.CHANNEL)
@@ -212,36 +261,47 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     fun closeOverlayMenu() { state = state.copy(overlayMenu = OverlayMenu.NONE) }
     fun focusGroup(group: String) { state = state.copy(focusedGroup = group, optionsContext = OptionsContext.GROUP) }
     fun selectGroup(group: String) { state = GuideNavigation.selectGroup(state, group) }
-    fun selectChannel(id: String) { state = state.copy(selectedChannelId = id, optionsContext = OptionsContext.CHANNEL); ensurePrograms(id) }
-    fun selectProgram(channelId: String, program: Program?) { state = state.copy(selectedChannelId = channelId, selectedProgram = program, optionsContext = OptionsContext.CHANNEL); ensurePrograms(channelId) }
-    fun ensurePrograms(channelId: String) {
-        if (channelId in state.programsLoadedFor) return
-        val channel = state.channels.firstOrNull { it.id == channelId } ?: return
-        if (state.programsLoadedFor.size >= 300) {
-            state = state.copy(programs = emptyList(), programIndex = ProgramIndex(emptyList()), programsLoadedFor = emptySet())
-        }
-        state = state.copy(programsLoadedFor = state.programsLoadedFor + channelId)
+    fun selectChannel(id: String) {
+        if (state.selectedChannelId == id && state.optionsContext == OptionsContext.CHANNEL) return
+        state = state.copy(selectedChannelId = id, optionsContext = OptionsContext.CHANNEL)
+    }
+    fun ensurePrograms(channelId: String) = ensurePrograms(listOf(channelId))
+    /** Loads guide data for several rows with one query per batch instead of one per row. */
+    fun ensurePrograms(channelIds: Collection<String>) {
+        val missing = channelIds.asSequence().filter { it !in state.programsLoadedFor }.distinct().mapNotNull(state.channelsById::get).toList()
+        if (missing.isEmpty()) return
+        if (state.programsLoadedFor.size + missing.size > 600) resetLoadedPrograms()
+        state = state.copy(programsLoadedFor = state.programsLoadedFor + missing.map { it.id })
         val generation = programLoadGeneration
         val timelineStart = state.timelineStart
         val timelineEnd = timelineStart + state.timelineHours * 3_600_000L
         val now = System.currentTimeMillis()
         val start = minOf(timelineStart - 3_600_000L, now - 2 * 3_600_000L)
-        val end = maxOf(timelineEnd + 3_600_000L, now + 6 * 3_600_000L)
-        viewModelScope.launch {
-            val programs = withContext(Dispatchers.IO) { store.getPrograms(listOf(channel.id, channel.tvgId), start, end, 2_000) }
-            if (generation != programLoadGeneration || channelId !in state.programsLoadedFor) return@launch
-            val ids = setOf(channel.id, channel.tvgId).filter(String::isNotBlank).toSet()
-            val merged = state.programs.filterNot { it.channelId in ids } + programs
-            state = state.copy(programs = merged, programIndex = ProgramIndex(merged))
+        val end = maxOf(timelineEnd + 3 * 3_600_000L, now + 6 * 3_600_000L)
+        loadedRangeStart = start; loadedRangeEnd = end
+        missing.chunked(150).forEach { batch ->
+            val keys = batch.flatMap { listOf(it.id, it.tvgId) }.filter(String::isNotBlank).toSet()
+            viewModelScope.launch {
+                val programs = withContext(Dispatchers.IO) { store.getPrograms(keys, start, end, 5_000 + 400 * batch.size) }
+                if (generation != programLoadGeneration) return@launch
+                val merged = state.programs.filterNot { it.channelId in keys } + programs
+                state = state.copy(programs = merged, programIndex = state.programIndex.replacing(keys, programs))
+            }
         }
     }
     private fun resetLoadedPrograms() {
         programLoadGeneration++
         state = state.copy(programs = emptyList(), programIndex = ProgramIndex(emptyList()), programsLoadedFor = emptySet())
     }
+    /** Marks guide data stale but keeps showing it until the reload lands, so rows never flash empty. */
+    private fun invalidatePrograms() {
+        if (state.programs.size > 40_000) { resetLoadedPrograms(); return }
+        programLoadGeneration++
+        state = state.copy(programsLoadedFor = emptySet())
+    }
     private fun resetAndReloadPrograms(requestedChannelIds: Set<String>) {
         resetLoadedPrograms()
-        requestedChannelIds.forEach(::ensurePrograms)
+        ensurePrograms(requestedChannelIds)
     }
     fun moveFocusedGroupToTop() = updateFocusedGroupOrder { current, group -> GroupOrdering.moveToTop(current, group) }
     fun moveFocusedGroup(delta: Int) = updateFocusedGroupOrder { current, group -> GroupOrdering.move(current, group, delta) }
@@ -253,20 +313,28 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         store.saveGroupOrder(order)
         state = state.copy(groupOrder = order, overlayMenu = OverlayMenu.NONE)
     }
-    fun shiftTimeline(hours: Int) {
-        state = state.copy(timelineStart = state.timelineStart + hours * 3_600_000L, selectedProgram = null)
-        resetLoadedPrograms()
+    private fun currentHalfHour(): Long = System.currentTimeMillis() / 1_800_000L * 1_800_000L
+    private fun windowOutsideLoadedRange(): Boolean =
+        state.timelineStart < loadedRangeStart || state.timelineStart + state.timelineHours * 3_600_000L > loadedRangeEnd
+    /** Scrolls the guide through time; it never goes before the current half-hour or past one week. */
+    fun shiftTimeline(deltaMs: Long) {
+        val home = currentHalfHour()
+        val target = (state.timelineStart + deltaMs).coerceIn(home, home + 7 * 24 * 3_600_000L)
+        if (target == state.timelineStart) return
+        state = state.copy(timelineStart = target)
+        if (windowOutsideLoadedRange()) invalidatePrograms()
     }
-    /** Refresh the guide window when the current half-hour changes. */
+    /** Follow the current half-hour unless the viewer has scrolled ahead, and pick up EPG refreshes. */
     fun refreshGuideForCurrentTime(onResume: Boolean = false) {
-        val now = System.currentTimeMillis() / 1_800_000L * 1_800_000L
+        val home = currentHalfHour()
         val refreshedAt = store.lastEpgRefresh()
         val epgChanged = refreshedAt != observedEpgRefresh
-        if (state.timelineStart != now || epgChanged) {
-            val requestedChannelIds = state.programsLoadedFor
-            state = state.copy(timelineStart = now, selectedProgram = null)
-            resetAndReloadPrograms(requestedChannelIds)
+        if (state.timelineStart != home && (state.timelineStart <= timelineHome || state.timelineStart < home)) {
+            state = state.copy(timelineStart = home)
         }
+        // Rows are reloaded together so every one of them covers the same time range.
+        if (epgChanged || home != timelineHome || (state.programsLoadedFor.isNotEmpty() && windowOutsideLoadedRange())) invalidatePrograms()
+        timelineHome = home
         observedEpgRefresh = refreshedAt
         if (!onResume || state.loading) return
         when (RefreshPolicy.onAppStart(state.provider != null, state.updatePlaylistOnStart)) {
@@ -277,16 +345,20 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     }
 
     fun jumpTimelineToNow() {
-        state = state.copy(timelineStart = System.currentTimeMillis() / 1_800_000L * 1_800_000L, selectedProgram = null)
-        resetLoadedPrograms()
+        guide.cursorTime = null
+        val home = currentHalfHour()
+        timelineHome = home
+        if (state.timelineStart == home) return
+        state = state.copy(timelineStart = home)
+        if (windowOutsideLoadedRange()) invalidatePrograms()
     }
     fun setTimelineHours(hours: Int) {
         store.setTimelineHours(hours)
         state = state.copy(timelineHours = hours)
-        resetLoadedPrograms()
+        invalidatePrograms()
     }
     fun play(id: String) {
-        val channel = state.channels.firstOrNull { it.id == id } ?: return
+        val channel = state.channelsById[id] ?: return
         if (state.screen != AppScreen.PLAYER) state = state.copy(playbackSourceScreen = state.screen)
         if (channel.locked && state.hasParentalPin) {
             state = state.copy(pendingPinChannelId = id)
@@ -295,9 +367,12 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         }
     }
     private fun startPlayback(channel: Channel, url: String) {
-        if (state.screen != AppScreen.PLAYER) {
-            // Keep channel surfing stable while watching changes the recent order.
+        // Keep channel surfing stable while watching changes the recent order, but
+        // follow the viewer when they pick a channel from another category.
+        val listKey = "${state.selectedGroup}|${state.query}"
+        if (state.screen != AppScreen.PLAYER || listKey != playbackListKey) {
             playbackChannelIds = state.visibleChannels.map { it.id }
+            playbackListKey = listKey
         }
         val recent = RecentChannels.record(state.recentChannelIds, channel.id)
         store.saveRecentChannelIds(recent)

@@ -15,6 +15,10 @@ object BackNavigationPolicy {
 
 object ScreenAwakePolicy {
     fun keepScreenOn(screen: AppScreen): Boolean = screen == AppScreen.PLAYER
+    /** Screens that show the running stream: full screen, or as the guide preview. */
+    fun hostsPlayback(screen: AppScreen): Boolean = screen == AppScreen.PLAYER || screen == AppScreen.GUIDE
+    fun keepScreenOn(screen: AppScreen, playbackActive: Boolean): Boolean =
+        keepScreenOn(screen) || (playbackActive && hostsPlayback(screen))
 }
 
 enum class PlayerRemoteAction { NONE, PREVIOUS_CHANNEL, NEXT_CHANNEL, SEEK_BACK, SEEK_FORWARD, PLAY_PAUSE, PLAY, PAUSE, TOGGLE_OVERLAY }
