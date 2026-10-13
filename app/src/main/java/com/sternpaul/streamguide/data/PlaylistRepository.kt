@@ -11,7 +11,7 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 class PlaylistRepository(private val store: AppStore) {
-    private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS).followRedirects(true).build()
+    private val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).followRedirects(true).build()
     private val refreshMutex = Mutex()
 
     suspend fun refreshAll(onProgress: suspend (String) -> Unit = {}): RefreshStatus = withContext(Dispatchers.IO) {
@@ -21,7 +21,7 @@ class PlaylistRepository(private val store: AppStore) {
         try {
             onProgress("Connecting to ${provider.name}")
             onProgress("Streaming and parsing live channel list")
-            val parsed = download(provider, ProviderEndpoints.playlist(provider)).use(M3uParser::parse)
+            val parsed = downloadPlaylist(provider, onProgress)
             require(parsed.isNotEmpty()) { "The provider returned no valid live channels. Check the server address and credentials." }
             onProgress("Found ${parsed.size} live channels")
             val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
@@ -99,12 +99,38 @@ class PlaylistRepository(private val store: AppStore) {
         }
     }
 
+    /**
+     * Large providers build the playlist on request and can stay silent for minutes, or drop
+     * the first attempt. Wait long, try twice, and say which step ran out of time.
+     */
+    private suspend fun downloadPlaylist(provider: ProviderConfig, onProgress: suspend (String) -> Unit): List<Channel> {
+        val url = ProviderEndpoints.playlist(provider)
+        var lastError: java.io.IOException? = null
+        repeat(PLAYLIST_ATTEMPTS) { attempt ->
+            val startedNs = System.nanoTime()
+            try {
+                return download(provider, url).use(M3uParser::parse)
+            } catch (error: java.io.IOException) {
+                lastError = error
+                val seconds = elapsedMs(startedNs) / 1_000
+                val reason = if (error is java.net.SocketTimeoutException) "the provider sent no data for ${seconds}s" else (error.message ?: error.javaClass.simpleName)
+                store.appendDiagnosticError("Playlist download", "Attempt ${attempt + 1}/$PLAYLIST_ATTEMPTS: $reason")
+                if (attempt + 1 < PLAYLIST_ATTEMPTS) onProgress("Playlist download failed ($reason) · retrying")
+            }
+        }
+        val error = lastError
+        error(if (error is java.net.SocketTimeoutException) "The provider did not deliver the playlist in time ($PLAYLIST_ATTEMPTS attempts). Your channels are unchanged."
+            else "Playlist download failed: ${error?.message ?: "unknown error"}")
+    }
+
     private fun download(provider: ProviderConfig, url: String): InputStream {
         if (url.startsWith("content://")) return store.openContentUri(url)
         val response = client.newCall(request(provider, url)).execute()
         if (!response.isSuccessful) { response.close(); error("Playlist HTTP ${response.code}") }
         return response.body?.byteStream() ?: error("Empty playlist response")
     }
+
+    private companion object { const val PLAYLIST_ATTEMPTS = 2 }
 
     private fun elapsedMs(startedNs: Long): Long = (System.nanoTime() - startedNs) / 1_000_000L
 
