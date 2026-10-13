@@ -20,11 +20,11 @@ class PlaylistRepository(private val store: AppStore) {
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
             onProgress("Connecting to ${provider.name}")
-            onProgress("Streaming and parsing live channel list")
-            val parsed = downloadPlaylist(provider, onProgress)
+            val previous = store.getChannels()
+            val parsed = loadChannels(provider, previous, onProgress)
             require(parsed.isNotEmpty()) { "The provider returned no valid live channels. Check the server address and credentials." }
             onProgress("Found ${parsed.size} live channels")
-            val reconciled = ChannelReconciler.reconcile(store.getChannels(), parsed)
+            val reconciled = ChannelReconciler.reconcile(previous, parsed)
             onProgress("Downloading TV guide")
             var epgWarning: String? = null
             val epgStartedNs = System.nanoTime()
@@ -95,6 +95,85 @@ class PlaylistRepository(private val store: AppStore) {
                 EpgInput.open(body.byteStream(), url, it.header("Content-Encoding").orEmpty()).use { input ->
                     XmlTvParser.parse(input, emit)
                 }
+            }
+        }
+    }
+
+    /**
+     * Xtream providers are asked for their live channels only. The full playlist also lists
+     * every movie and episode and is the slow, fragile path; it stays as the fallback.
+     */
+    private suspend fun loadChannels(provider: ProviderConfig, previous: List<Channel>, onProgress: suspend (String) -> Unit): List<Channel> {
+        val account = XtreamChannels.account(provider)
+        if (account != null) {
+            runCatching {
+                onProgress("Loading live channels")
+                val categories = xtreamCategories(provider, account)
+                val streams = xtreamStreams(provider, account)
+                val channels = XtreamChannels.build(account, streams, categories, previous)
+                // A much shorter list than before means the API is incomplete, not that channels vanished.
+                check(channels.isNotEmpty() && channels.size * 2 >= previous.size) { "live list has ${channels.size} channels, ${previous.size} saved" }
+                channels
+            }.onSuccess { return it }.onFailure { error ->
+                val reason = error.message?.take(140) ?: error.javaClass.simpleName
+                store.appendDiagnosticError("Live channel list", "$reason · using the full playlist instead")
+                onProgress("Live channel list unavailable · downloading full playlist")
+            }
+            return XtreamChannels.carryIds(previous, downloadPlaylist(provider, onProgress))
+        }
+        onProgress("Streaming and parsing live channel list")
+        return downloadPlaylist(provider, onProgress)
+    }
+
+    private fun xtreamCategories(provider: ProviderConfig, account: XtreamAccount): Map<String, String> {
+        val categories = HashMap<String, String>()
+        xtreamArray(provider, ProviderEndpoints.xtreamApi(account, "get_live_categories")) { fields ->
+            val id = fields["category_id"].orEmpty()
+            if (id.isNotBlank()) categories[id] = fields["category_name"].orEmpty()
+        }
+        return categories
+    }
+
+    private fun xtreamStreams(provider: ProviderConfig, account: XtreamAccount): List<XtreamStream> {
+        val streams = ArrayList<XtreamStream>()
+        xtreamArray(provider, ProviderEndpoints.xtreamApi(account, "get_live_streams")) { fields ->
+            streams += XtreamStream(
+                streamId = fields["stream_id"].orEmpty(),
+                name = fields["name"].orEmpty(),
+                categoryId = fields["category_id"].orEmpty(),
+                epgChannelId = fields["epg_channel_id"].orEmpty(),
+                icon = fields["stream_icon"].orEmpty(),
+                archiveDays = if (fields["tv_archive"] == "1") fields["tv_archive_duration"]?.toIntOrNull() ?: 0 else 0
+            )
+        }
+        return streams
+    }
+
+    /** Streams a JSON array of flat objects; values arrive as text whatever their JSON type. */
+    private fun xtreamArray(provider: ProviderConfig, url: String, onObject: (Map<String, String>) -> Unit) {
+        client.newCall(request(provider, url)).execute().use { response ->
+            if (!response.isSuccessful) error("HTTP ${response.code}")
+            val body = response.body ?: error("empty response")
+            android.util.JsonReader(body.charStream()).use { reader ->
+                reader.isLenient = true
+                if (reader.peek() != android.util.JsonToken.BEGIN_ARRAY) error("unexpected response (login rejected?)")
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    if (reader.peek() != android.util.JsonToken.BEGIN_OBJECT) { reader.skipValue(); continue }
+                    val fields = HashMap<String, String>()
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        val name = reader.nextName()
+                        when (reader.peek()) {
+                            android.util.JsonToken.STRING, android.util.JsonToken.NUMBER -> fields[name] = reader.nextString()
+                            android.util.JsonToken.BOOLEAN -> fields[name] = if (reader.nextBoolean()) "1" else "0"
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                    onObject(fields)
+                }
+                reader.endArray()
             }
         }
     }

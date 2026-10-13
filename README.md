@@ -14,6 +14,8 @@ StreamGuide provides no channels or media. Use only sources you are authorized t
 - M3U/M3U8 URLs and local M3U files
 - XMLTV and XMLTV.gz programme guides
 - Provider-specific User-Agent and HTTP referer headers for playlist, EPG and Media3 playback requests
+- Xtream logins (and M3U links that are an Xtream `get.php` playlist) load only the live channels and categories through the provider API; the full playlist, which also lists every movie and episode, is used only if that fails
+- Saved channels are matched by stream id, so favorites, order, hidden state and custom names carry over
 - Streaming playlist and XMLTV parsing for large providers
 - Categories come from each entry's `group-title` (or `#EXTGRP`); entries without one go to **Other**
 - Channels that share one `tvg-id` (SD/HD/backup variants) are all kept and share the same guide data; only the identical stream listed twice is skipped

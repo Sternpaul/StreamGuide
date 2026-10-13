@@ -8,6 +8,9 @@ object ProviderEndpoints {
         ProviderType.XTREAM -> "${provider.serverUrl.trimEnd('/')}/get.php?username=${encode(provider.username)}&password=${encode(provider.password)}&type=m3u_plus&output=ts"
     }
 
+    fun xtreamApi(account: XtreamAccount, action: String): String =
+        "${account.server}/player_api.php?username=${encode(account.username)}&password=${encode(account.password)}&action=$action"
+
     fun epg(provider: ProviderConfig): String = provider.epgUrl.trim().ifBlank {
         if (provider.type == ProviderType.XTREAM) "${provider.serverUrl.trimEnd('/')}/xmltv.php?username=${encode(provider.username)}&password=${encode(provider.password)}" else ""
     }
