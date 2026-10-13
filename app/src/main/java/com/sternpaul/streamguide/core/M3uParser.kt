@@ -6,10 +6,15 @@ import java.security.MessageDigest
 object M3uParser {
     private val attribute = Regex("([A-Za-z0-9_-]+)=\\\"([^\\\"]*)\\\"")
 
+    /** What happened to the playlist's entries, for the import log. */
+    class Stats { var entries = 0; var onDemand = 0; var invalid = 0; var duplicates = 0 }
+
     fun parse(text: String): List<Channel> = text.byteInputStream().use(::parse)
 
     /** Parses incrementally so provider playlists can be much larger than device memory. */
-    fun parse(input: InputStream): List<Channel> {
+    fun parse(input: InputStream): List<Channel> = parse(input, Stats())
+
+    fun parse(input: InputStream, stats: Stats): List<Channel> {
         val channels = mutableListOf<Channel>()
         val seenIds = mutableSetOf<String>()
         val seenStreams = mutableSetOf<String>()
@@ -28,24 +33,26 @@ object M3uParser {
                         val extGroup = pendingGroup
                         pendingInfo = null
                         pendingGroup = null
-                        if (!isStreamUrl(line) || isOnDemandUrl(line)) return@forEach
+                        stats.entries++
+                        if (!isStreamUrl(line)) { stats.invalid++; return@forEach }
+                        if (isOnDemandUrl(line)) { stats.onDemand++; return@forEach }
 
                         val attrs = attribute.findAll(info).associate {
                             it.groupValues[1].lowercase() to it.groupValues[2]
                         }
                         // Attribute values may contain commas; the name starts after the last attribute.
                         val name = attribute.replace(info, "").substringAfter(',', "").trim()
-                        if (name.isBlank()) return@forEach
+                        if (name.isBlank()) { stats.invalid++; return@forEach }
 
                         val tvgId = attrs["tvg-id"].orEmpty()
                         // Providers reuse one tvg-id for the SD/HD/backup variants of a channel. The
                         // first keeps the plain id (so saved favourites survive); the others get
                         // their own id instead of being dropped. Only the same stream twice is skipped.
-                        if (!seenStreams.add("$tvgId\n$line")) return@forEach
+                        if (!seenStreams.add("$tvgId\n$line")) { stats.duplicates++; return@forEach }
                         var id = tvgId.ifBlank { stableId(line) }
                         if (!seenIds.add(id)) {
                             id = "$tvgId#${stableId(line)}"
-                            if (tvgId.isBlank() || !seenIds.add(id)) return@forEach
+                            if (tvgId.isBlank() || !seenIds.add(id)) { stats.duplicates++; return@forEach }
                         }
 
                         channels += Channel(

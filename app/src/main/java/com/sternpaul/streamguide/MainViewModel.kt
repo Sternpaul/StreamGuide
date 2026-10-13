@@ -110,6 +110,7 @@ data class UiState(
     val importFinished: Boolean = false,
     val epgDiagnostics: EpgDiagnostics? = null,
     val diagnosticErrors: List<DiagnosticLogEntry> = emptyList(),
+    val importReports: List<ImportReport> = emptyList(),
     val diagnosticsLoading: Boolean = false,
     val diagnosticsError: String = "",
     val overlayMenu: OverlayMenu = OverlayMenu.NONE
@@ -206,7 +207,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             timelineHours = store.timelineHours(),
             epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
-            diagnosticErrors = store.diagnosticErrors(),
+            diagnosticErrors = store.diagnosticErrors(), importReports = store.importReports(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
         )
         return initial.copy(selectedChannelId = initial.visibleChannels.firstOrNull()?.id)
@@ -229,7 +230,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                         epgDiagnostics = diagnostics,
                         diagnosticsLoading = false,
                         diagnosticsError = "",
-                        diagnosticErrors = store.diagnosticErrors(),
+                        diagnosticErrors = store.diagnosticErrors(), importReports = store.importReports(),
                         status = state.status.copy(programCount = diagnostics.totalPrograms)
                     )
                 }

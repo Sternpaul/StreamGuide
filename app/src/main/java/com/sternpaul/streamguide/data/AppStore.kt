@@ -20,6 +20,7 @@ class AppStore(private val context: Context) {
     }
     private val channelsFile = File(context.filesDir, "channels.json")
     private val programsFile = File(context.filesDir, "programs.json")
+    private val archiveFile = File(context.filesDir, "channel_archive.json")
     private val epgDatabase by lazy { EpgDatabase(context) }
 
     fun getProvider(): ProviderConfig? = secure.getString("provider", null)?.let(::providerFromJson)
@@ -29,14 +30,45 @@ class AppStore(private val context: Context) {
         prefs.edit().remove("group_order").remove("epg_sqlite_migrated")
             .remove("last_refresh").remove("last_error")
             .remove("last_epg_refresh").remove("last_epg_duration_ms").remove("last_full_refresh_duration_ms")
-            .remove("recent_channels").remove("multiview_channels").remove("diagnostic_error_log").apply()
+            .remove("recent_channels").remove("multiview_channels").remove("diagnostic_error_log")
+            .remove("channels_source").remove("channels_server").remove("import_reports").apply()
         channelsFile.delete()
+        archiveFile.delete()
         programsFile.delete()
         epgDatabase.clear()
     }
 
     fun getChannels(): List<Channel> = readModels(channelsFile, ::channelFromJson)
     fun saveChannels(channels: List<Channel>) = JsonLinesStore.write(channelsFile, channels.asSequence()) { channelToJson(it).toString() }
+    /** Channels the provider stopped listing; their saved state returns when they do. */
+    fun archivedChannels(): List<SavedChannel> = JsonLinesStore.read(archiveFile) { line ->
+        runCatching { JSONObject(line).let { item -> channelFromJson(item)?.let { SavedChannel(it, item.optString("archiveSource")) } } }.getOrNull()
+    }
+    fun saveArchivedChannels(channels: List<SavedChannel>) =
+        JsonLinesStore.write(archiveFile, channels.asSequence()) { channelToJson(it.channel).put("archiveSource", it.source).toString() }
+    fun channelSource(): String? = prefs.getString("channels_source", null)
+    fun channelServer(): String? = prefs.getString("channels_server", null)?.takeIf { it.isNotBlank() }
+    fun setChannelSource(source: String, server: String) { prefs.edit().putString("channels_source", source).putString("channels_server", server).apply() }
+    @Synchronized fun importReports(): List<ImportReport> = runCatching {
+        val array = JSONArray(prefs.getString("import_reports", "[]") ?: "[]")
+        (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let { o ->
+                ImportReport(o.optLong("time"), o.optString("source"), o.optInt("received"), o.optInt("channels"), o.optInt("categories"),
+                    o.optInt("kept"), o.optInt("added"), o.optInt("restored"), o.optInt("missing"), o.optInt("onDemand"), o.optInt("invalid"),
+                    o.optInt("duplicate"), o.optBoolean("newPlaylist"), o.optString("note"), o.optLong("duration"))
+            }
+        }
+    }.getOrDefault(emptyList())
+    @Synchronized fun appendImportReport(report: ImportReport) {
+        val array = JSONArray()
+        (listOf(report) + importReports()).take(30).forEach { r ->
+            array.put(JSONObject().put("time", r.timeEpochMs).put("source", r.source).put("received", r.received).put("channels", r.channels)
+                .put("categories", r.categories).put("kept", r.kept).put("added", r.added).put("restored", r.restored).put("missing", r.missing)
+                .put("onDemand", r.skippedOnDemand).put("invalid", r.skippedInvalid).put("duplicate", r.skippedDuplicate)
+                .put("newPlaylist", r.newPlaylist).put("note", r.note).put("duration", r.durationMs))
+        }
+        prefs.edit().putString("import_reports", array.toString()).apply()
+    }
     fun getPrograms(): List<Program> { ensureEpgMigrated(); return epgDatabase.all() }
     fun getPrograms(channelIds: Collection<String>, startMs: Long, endMs: Long, limit: Int = 5_000): List<Program> {
         ensureEpgMigrated()

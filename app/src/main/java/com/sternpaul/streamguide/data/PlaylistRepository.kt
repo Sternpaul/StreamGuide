@@ -20,11 +20,25 @@ class PlaylistRepository(private val store: AppStore) {
         val provider = store.getProvider() ?: error("Add a playlist first")
         try {
             onProgress("Connecting to ${provider.name}")
-            val previous = store.getChannels()
-            val parsed = loadChannels(provider, previous, onProgress)
-            require(parsed.isNotEmpty()) { "The provider returned no valid live channels. Check the server address and credentials." }
-            onProgress("Found ${parsed.size} live channels")
-            val reconciled = ChannelReconciler.reconcile(previous, parsed)
+            val saved = store.getChannels()
+            val source = PlaylistSource.of(provider)
+            // Installs from before sources were recorded only ever had this one playlist.
+            val savedSource = PlaylistSource.decode(store.channelSource()) ?: source
+            val newPlaylist = saved.isNotEmpty() && !savedSource.sameAs(source)
+            if (newPlaylist) onProgress("Different playlist detected · previous channels are archived")
+            val loaded = loadChannels(provider, if (newPlaylist) emptyList() else saved, onProgress)
+            require(loaded.channels.isNotEmpty()) { "The provider returned no valid live channels. Check the server address and credentials." }
+            val merged = ChannelImport.merge(saved, savedSource, store.archivedChannels(), source, loaded.channels, loaded.options)
+            val reconciled = merged.channels
+            val report = ImportReport(
+                timeEpochMs = System.currentTimeMillis(), source = loaded.label, received = loaded.received,
+                channels = reconciled.size, categories = reconciled.mapTo(HashSet()) { it.group }.size,
+                kept = merged.kept, added = merged.added, restored = merged.restored, missing = merged.missing,
+                skippedOnDemand = loaded.onDemand, skippedInvalid = loaded.invalid, skippedDuplicate = loaded.duplicates,
+                newPlaylist = newPlaylist, note = loaded.note, durationMs = elapsedMs(refreshStartedNs)
+            )
+            onProgress("Received ${report.received} entries · ${report.channels} live channels in ${report.categories} categories")
+            onProgress("${report.kept} known · ${report.added} new · ${report.restored} restored · ${report.missing} no longer provided")
             onProgress("Downloading TV guide")
             var epgWarning: String? = null
             val epgStartedNs = System.nanoTime()
@@ -42,7 +56,11 @@ class PlaylistRepository(private val store: AppStore) {
             }
             onProgress("Found $epgCount guide programmes")
             onProgress("Saving channels and guide")
+            // Archive first: if the app dies between the two writes, nothing is forgotten.
+            store.saveArchivedChannels(merged.archive)
             store.saveChannels(reconciled)
+            store.setChannelSource(source.encode(), XtreamChannels.account(provider)?.server.orEmpty())
+            store.appendImportReport(report)
             store.setLastRefresh(System.currentTimeMillis())
             store.setLastFullRefreshDurationMs(elapsedMs(refreshStartedNs))
             store.setLastError(epgWarning.orEmpty())
@@ -99,30 +117,45 @@ class PlaylistRepository(private val store: AppStore) {
         }
     }
 
+    private class LoadedChannels(
+        val channels: List<Channel>, val options: ChannelImport.Options, val label: String,
+        val received: Int, val onDemand: Int, val invalid: Int, val duplicates: Int, val note: String = ""
+    )
+
     /**
      * Xtream providers are asked for their live channels only. The full playlist also lists
      * every movie and episode and is the slow, fragile path; it stays as the fallback.
+     * [sameSourceSaved] is empty when the playlist itself was replaced.
      */
-    private suspend fun loadChannels(provider: ProviderConfig, previous: List<Channel>, onProgress: suspend (String) -> Unit): List<Channel> {
+    private suspend fun loadChannels(provider: ProviderConfig, sameSourceSaved: List<Channel>, onProgress: suspend (String) -> Unit): LoadedChannels {
         val account = XtreamChannels.account(provider)
+        var note = ""
         if (account != null) {
+            val previousServer = store.channelServer()
             runCatching {
                 onProgress("Loading live channels")
                 val categories = xtreamCategories(provider, account)
                 val streams = xtreamStreams(provider, account)
-                val channels = XtreamChannels.build(account, streams, categories, previous)
+                val loaded = XtreamChannels.load(account, streams, categories, sameSourceSaved, previousServer)
                 // A much shorter list than before means the API is incomplete, not that channels vanished.
-                check(channels.isNotEmpty() && channels.size * 2 >= previous.size) { "live list has ${channels.size} channels, ${previous.size} saved" }
-                channels
+                check(loaded.channels.isNotEmpty() && loaded.channels.size * 2 >= sameSourceSaved.size) { "live list has ${loaded.channels.size} channels, ${sameSourceSaved.size} saved" }
+                LoadedChannels(
+                    loaded.channels,
+                    ChannelImport.Options(matchById = false, useStreamKeys = true) { XtreamChannels.savedUrlStillValid(account, previousServer, it.url) },
+                    "Live channel API", streams.size, 0, loaded.invalid, loaded.duplicates
+                )
             }.onSuccess { return it }.onFailure { error ->
-                val reason = error.message?.take(140) ?: error.javaClass.simpleName
-                store.appendDiagnosticError("Live channel list", "$reason · using the full playlist instead")
+                note = "Live channel API failed: ${DiagnosticMessageSanitizer.sanitize(error.message ?: error.javaClass.simpleName).take(120)}"
+                store.appendDiagnosticError("Live channel list", "$note · using the full playlist instead")
                 onProgress("Live channel list unavailable · downloading full playlist")
             }
-            return XtreamChannels.carryIds(previous, downloadPlaylist(provider, onProgress))
-        }
-        onProgress("Streaming and parsing live channel list")
-        return downloadPlaylist(provider, onProgress)
+        } else onProgress("Streaming and parsing live channel list")
+        val stats = M3uParser.Stats()
+        val parsed = downloadPlaylist(provider, stats, onProgress)
+        return LoadedChannels(
+            parsed, ChannelImport.Options(matchById = true, useStreamKeys = account != null),
+            "Full playlist", stats.entries, stats.onDemand, stats.invalid, stats.duplicates, note
+        )
     }
 
     private fun xtreamCategories(provider: ProviderConfig, account: XtreamAccount): Map<String, String> {
@@ -182,13 +215,14 @@ class PlaylistRepository(private val store: AppStore) {
      * Large providers build the playlist on request and can stay silent for minutes, or drop
      * the first attempt. Wait long, try twice, and say which step ran out of time.
      */
-    private suspend fun downloadPlaylist(provider: ProviderConfig, onProgress: suspend (String) -> Unit): List<Channel> {
+    private suspend fun downloadPlaylist(provider: ProviderConfig, stats: M3uParser.Stats, onProgress: suspend (String) -> Unit): List<Channel> {
         val url = ProviderEndpoints.playlist(provider)
         var lastError: java.io.IOException? = null
         repeat(PLAYLIST_ATTEMPTS) { attempt ->
             val startedNs = System.nanoTime()
             try {
-                return download(provider, url).use(M3uParser::parse)
+                stats.entries = 0; stats.onDemand = 0; stats.invalid = 0; stats.duplicates = 0
+                return download(provider, url).use { M3uParser.parse(it, stats) }
             } catch (error: java.io.IOException) {
                 lastError = error
                 val seconds = elapsedMs(startedNs) / 1_000

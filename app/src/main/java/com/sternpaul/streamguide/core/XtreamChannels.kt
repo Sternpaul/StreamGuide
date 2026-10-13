@@ -16,10 +16,8 @@ data class XtreamStream(
 )
 
 /**
- * Builds the channel list from the Xtream live-stream API instead of the full playlist, which
- * also contains every movie and episode. Saved channels are recognised by the numeric stream
- * id at the end of their URL and keep their id and URL, so favourites, ordering, hidden state
- * and custom names survive the switch.
+ * Reads the channel list from the Xtream live-stream API instead of the full playlist, which
+ * also contains every movie and episode. Recognising saved channels is [ChannelImport]'s job.
  */
 object XtreamChannels {
     /** Xtream logins, and M3U links that are really an Xtream `get.php` playlist. */
@@ -47,63 +45,54 @@ object XtreamChannels {
         return segment.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
     }
 
-    fun build(account: XtreamAccount, streams: List<XtreamStream>, categories: Map<String, String>, previous: List<Channel>): List<Channel> {
-        val previousByKey = HashMap<String, Channel>()
-        previous.forEach { channel -> streamKey(channel.url)?.let { if (it !in previousByKey) previousByKey[it] = channel } }
-        val (prefix, suffix) = urlPattern(account, previous)
-        val usedIds = HashSet<String>()
+    class Loaded(val channels: List<Channel>, val invalid: Int, val duplicates: Int)
+
+    /**
+     * Channels as the provider lists them, with provisional ids. [ChannelImport.merge] decides
+     * which of them are saved channels. [sameSourceSaved] only supplies the URL shape.
+     */
+    fun load(account: XtreamAccount, streams: List<XtreamStream>, categories: Map<String, String>, sameSourceSaved: List<Channel>, previousServer: String? = null): Loaded {
+        val (prefix, suffix) = urlPattern(account, sameSourceSaved, previousServer)
         val seenStreams = HashSet<String>()
-        // Saved ids are reserved first so a new channel can never take one over.
-        streams.forEach { stream -> previousByKey[stream.streamId]?.let { usedIds += it.id } }
+        var invalid = 0
+        var duplicates = 0
         val channels = ArrayList<Channel>(streams.size)
         for (stream in streams) {
             val name = stream.name.trim()
-            if (stream.streamId.isBlank() || name.isBlank() || !seenStreams.add(stream.streamId)) continue
-            val saved = previousByKey[stream.streamId]
-            val id = saved?.id ?: newId(stream, usedIds)
+            if (stream.streamId.isBlank() || !stream.streamId.all(Char::isDigit) || name.isBlank()) { invalid++; continue }
+            if (!seenStreams.add(stream.streamId)) { duplicates++; continue }
             channels += Channel(
-                id = id,
+                id = stream.epgChannelId.trim().ifBlank { "xt-${stream.streamId}" },
                 name = name,
-                url = saved?.url ?: "$prefix${stream.streamId}$suffix",
+                url = "$prefix${stream.streamId}$suffix",
                 group = categories[stream.categoryId].orEmpty().trim().ifBlank { "Other" },
                 tvgId = stream.epgChannelId.trim(),
                 logoUrl = stream.icon.trim(),
                 providerOrder = channels.size,
-                catchupSource = saved?.catchupSource.orEmpty(),
-                catchupDays = saved?.catchupDays?.takeIf { it > 0 } ?: stream.archiveDays
+                catchupDays = stream.archiveDays
             )
         }
-        return channels
+        return Loaded(channels, invalid, duplicates)
     }
 
     /**
-     * For the playlist fallback: a channel first imported through the API has an id the
-     * playlist parser would not produce. Recognise it by stream id and keep the saved id.
+     * A saved stream address is kept only while it still carries the current login and was
+     * not issued for a server address that has since been replaced.
      */
-    fun carryIds(previous: List<Channel>, parsed: List<Channel>): List<Channel> {
-        val previousIds = previous.mapTo(HashSet()) { it.id }
-        val previousByKey = HashMap<String, Channel>()
-        previous.forEach { channel -> streamKey(channel.url)?.let { if (it !in previousByKey) previousByKey[it] = channel } }
-        val taken = parsed.mapNotNullTo(HashSet()) { it.id.takeIf(previousIds::contains) }
-        return parsed.map { channel ->
-            if (channel.id in previousIds) return@map channel
-            val saved = streamKey(channel.url)?.let(previousByKey::get) ?: return@map channel
-            if (taken.add(saved.id)) channel.copy(id = saved.id) else channel
-        }
+    fun savedUrlStillValid(account: XtreamAccount, previousServer: String?, url: String): Boolean {
+        if (streamKey(url) == null || !hasCredentials(account, url)) return false
+        val replaced = previousServer?.trimEnd('/')?.takeIf { it.isNotBlank() && it != account.server }
+        return replaced == null || !url.startsWith("$replaced/")
     }
 
-    private fun newId(stream: XtreamStream, usedIds: MutableSet<String>): String {
-        val epg = stream.epgChannelId.trim()
-        val candidates = if (epg.isBlank()) listOf("xt-${stream.streamId}") else listOf(epg, "$epg#xt-${stream.streamId}")
-        return candidates.firstOrNull(usedIds::add) ?: "xt-${stream.streamId}-${usedIds.size}".also { usedIds += it }
-    }
+    private fun hasCredentials(account: XtreamAccount, url: String): Boolean =
+        url.substringBefore('?').substringBeforeLast('/').plus("/").endsWith("/${account.username}/${account.password}/")
 
     /** New channels use the URL shape this provider's saved channels already play with. */
-    private fun urlPattern(account: XtreamAccount, previous: List<Channel>): Pair<String, String> {
+    private fun urlPattern(account: XtreamAccount, previous: List<Channel>, previousServer: String?): Pair<String, String> {
         val default = "${account.server}/live/${account.username}/${account.password}/" to ".ts"
-        val credentials = "/${account.username}/${account.password}/"
         return previous.asSequence()
-            .filter { streamKey(it.url) != null && it.url.substringBefore('?').substringBeforeLast('/').plus("/").endsWith(credentials) }
+            .filter { savedUrlStillValid(account, previousServer, it.url) }
             .map { channel ->
                 val path = channel.url.substringBefore('?')
                 val last = path.substringAfterLast('/')

@@ -1,7 +1,9 @@
 package com.sternpaul.streamguide.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class XtreamChannelsTest {
@@ -9,49 +11,29 @@ class XtreamChannelsTest {
     private val categories = mapOf("1" to "News", "2" to "Sport")
 
     @Test
-    fun savedChannelsKeepTheirIdAndUrlSoFavouritesSurvive() {
-        val previous = listOf(
-            Channel("ard", "Das Erste", "http://cdn.example/user/pass/10", tvgId = "ard", favorite = true),
-            Channel("9f3ab1c2d4e5f6a7b8c9", "No Guide", "http://cdn.example/user/pass/11", favorite = true),
-            Channel("ard#aa11", "Das Erste FHD", "http://cdn.example/user/pass/12", tvgId = "ard")
-        )
-        val streams = listOf(
-            XtreamStream("12", "Das Erste FHD", "1", "ard"),
-            XtreamStream("10", "Das Erste HD", "1", "ard"),
-            XtreamStream("11", "No Guide", "2"),
-            XtreamStream("13", "Brand New", "9", "ard")
-        )
-        val built = XtreamChannels.build(account, streams, categories, previous)
-
-        assertEquals(listOf("ard#aa11", "ard", "9f3ab1c2d4e5f6a7b8c9", "ard#xt-13"), built.map { it.id })
-        assertEquals("http://cdn.example/user/pass/11", built[2].url)
-        assertEquals("http://cdn.example/user/pass/13", built[3].url)
-        assertEquals(listOf("News", "News", "Sport", "Other"), built.map { it.group })
-        val reconciled = ChannelReconciler.reconcile(previous, built)
-        assertEquals(listOf(false, true, true, false), reconciled.map { it.favorite })
+    fun firstImportUsesTheStandardLiveUrlAndCountsWhatItSkips() {
+        val loaded = XtreamChannels.load(account, listOf(XtreamStream("5", " One ", "1", "one"), XtreamStream("5", "One again", "2", "one"), XtreamStream("6", "Two", "9"), XtreamStream("7", "", "1"), XtreamStream("x", "Bad", "1")), categories, emptyList())
+        assertEquals(listOf("One", "Two"), loaded.channels.map { it.name })
+        assertEquals("http://tv.example:8080/live/user/pass/5.ts", loaded.channels[0].url)
+        assertEquals(listOf("News", "Other"), loaded.channels.map { it.group })
+        assertEquals(1, loaded.duplicates)
+        assertEquals(2, loaded.invalid)
     }
 
     @Test
-    fun firstImportUsesTheStandardLiveUrlAndSkipsRepeatedStreams() {
-        val built = XtreamChannels.build(account, listOf(XtreamStream("5", " One ", "1", "one"), XtreamStream("5", "One again", "2", "one"), XtreamStream("6", "Two", "1", "one"), XtreamStream("7", "", "1")), categories, emptyList())
-        assertEquals(listOf("one", "one#xt-6"), built.map { it.id })
-        assertEquals("http://tv.example:8080/live/user/pass/5.ts", built[0].url)
-        assertEquals("One", built[0].name)
+    fun newChannelsFollowTheUrlShapeOfSavedOnes() {
+        val saved = listOf(Channel("a", "A", "http://cdn.example/user/pass/10"), Channel("b", "B", "http://cdn.example/user/pass/11"))
+        assertEquals("http://cdn.example/user/pass/13", XtreamChannels.load(account, listOf(XtreamStream("13", "New")), categories, saved).channels.single().url)
     }
 
     @Test
-    fun repeatedImportsAreStable() {
-        val streams = listOf(XtreamStream("5", "One", "1"), XtreamStream("6", "Two", "1", "two"))
-        val first = XtreamChannels.build(account, streams, categories, emptyList())
-        assertEquals(first, XtreamChannels.build(account, streams, categories, first))
-        assertEquals(first.map { it.id to it.url }.toSet(), XtreamChannels.build(account, streams.reversed(), categories, first).map { it.id to it.url }.toSet())
-    }
-
-    @Test
-    fun playlistFallbackKeepsIdsOfChannelsImportedThroughTheApi() {
-        val previous = listOf(Channel("xt-5", "One", "http://tv.example:8080/live/user/pass/5.ts"), Channel("two", "Two", "http://tv.example:8080/live/user/pass/6.ts", tvgId = "two"))
-        val parsed = listOf(Channel("hash-of-url", "One", "http://tv.example:8080/user/pass/5"), Channel("two", "Two", "http://tv.example:8080/user/pass/6", tvgId = "two"), Channel("other", "Three", "http://tv.example:8080/user/pass/7"))
-        assertEquals(listOf("xt-5", "two", "other"), XtreamChannels.carryIds(previous, parsed).map { it.id })
+    fun savedAddressesAreDroppedAfterALoginOrServerChange() {
+        assertTrue(XtreamChannels.savedUrlStillValid(account, "http://tv.example:8080", "http://tv.example:8080/live/user/pass/5.ts"))
+        assertTrue(XtreamChannels.savedUrlStillValid(account, null, "http://cdn.example/user/pass/5"))
+        assertFalse(XtreamChannels.savedUrlStillValid(account, null, "http://tv.example:8080/live/user/oldpass/5.ts"))
+        assertFalse(XtreamChannels.savedUrlStillValid(account, "http://old.example", "http://old.example/live/user/pass/5.ts"))
+        val saved = listOf(Channel("a", "A", "http://old.example/live/user/pass/10.m3u8"))
+        assertEquals("http://tv.example:8080/live/user/pass/13.ts", XtreamChannels.load(account, listOf(XtreamStream("13", "New")), categories, saved, "http://old.example").channels.single().url)
     }
 
     @Test

@@ -508,6 +508,29 @@ class MainActivity : ComponentActivity() {
             }
         }
         item {
+            SettingsCard("PLAYLIST IMPORTS") {
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    val latest = state.importReports.firstOrNull()
+                    if (latest == null) Text("No import recorded yet.", color = TextMuted)
+                    else {
+                        StatusLine("Last import", "${diagnosticTime(latest.timeEpochMs)} · ${latest.source} · ${diagnosticDuration(latest.durationMs)}")
+                        StatusLine("Entries received from provider", latest.received.toString())
+                        StatusLine("Live channels in the app", "${latest.channels} in ${latest.categories} categories")
+                        StatusLine("Already known", latest.kept.toString())
+                        StatusLine("New", latest.added.toString())
+                        StatusLine("Restored from archive", latest.restored.toString())
+                        StatusLine("No longer provided (archived)", latest.missing.toString())
+                        StatusLine("Skipped", "${latest.skippedOnDemand} movies/series · ${latest.skippedDuplicate} duplicates · ${latest.skippedInvalid} invalid")
+                        if (latest.newPlaylist) Text("Different playlist than before: previous channels were archived.", color = Warning, fontSize = 12.sp)
+                        if (latest.note.isNotBlank()) Text(latest.note, color = Warning, fontSize = 12.sp)
+                        state.importReports.drop(1).take(9).forEach { report ->
+                            Text("${diagnosticTime(report.timeEpochMs)} · ${report.source} · ${report.received} received · ${report.channels} channels · +${report.added + report.restored} −${report.missing}", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                }
+            }
+        }
+        item {
             SettingsCard("EPG MAPPING") {
                 when {
                     state.diagnosticsLoading && state.epgDiagnostics == null -> Text("Calculating EPG mapping…", color = TextMuted, modifier = Modifier.padding(16.dp))
