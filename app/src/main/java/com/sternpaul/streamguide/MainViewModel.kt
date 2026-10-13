@@ -407,6 +407,12 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
         val current = list.indexOf(state.playingChannelId).coerceAtLeast(0)
         play(list[(current + delta).coerceIn(0, list.lastIndex)])
     }
+    /** Returns to the running channel in full screen without restarting it. */
+    fun showPlayer(): Boolean {
+        if (state.playingChannel == null || state.playingUrl == null) return false
+        state = state.copy(screen = AppScreen.PLAYER, playbackSourceScreen = AppScreen.GUIDE)
+        return true
+    }
     fun closePlayer() { state = state.copy(screen = state.playbackSourceScreen) }
     fun playPreviousChannel() { state.recentChannelIds.getOrNull(1)?.let(::play) }
     fun addToMultiview(id: String) {

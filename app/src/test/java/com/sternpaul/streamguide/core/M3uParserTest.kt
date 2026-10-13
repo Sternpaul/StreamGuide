@@ -11,6 +11,33 @@ https://stream/live.m3u8"""
   val channels = M3uParser.parse(input)
   assertEquals(1, channels.size); assertEquals("bbc1", channels[0].tvgId); assertEquals("News", channels[0].group); assertEquals("BBC One", channels[0].name); assertEquals("https://stream/live.m3u8", channels[0].url)
  }
+ @Test fun keepsEveryVariantThatSharesOneTvgId() {
+  val channels = M3uParser.parse("""#EXTM3U
+#EXTINF:-1 tvg-id="ard" group-title="DE",Das Erste HD
+https://stream/1.ts
+#EXTINF:-1 tvg-id="ard" group-title="DE",Das Erste FHD
+https://stream/2.ts
+#EXTINF:-1 tvg-id="ard" group-title="DE",Das Erste HD
+https://stream/1.ts""")
+  assertEquals(listOf("Das Erste HD", "Das Erste FHD"), channels.map { it.name })
+  assertEquals("ard", channels[0].id)
+  assertNotEquals("ard", channels[1].id)
+  assertEquals(listOf("ard", "ard"), channels.map { it.tvgId })
+  assertEquals(channels[1].id, M3uParser.parse("""#EXTINF:-1 tvg-id="ard",A
+https://stream/x.ts
+#EXTINF:-1 tvg-id="ard",B
+https://stream/2.ts""")[1].id)
+ }
+ @Test fun readsExtGrpAndNamesAfterAttributesContainingCommas() {
+  val channels = M3uParser.parse("""#EXTM3U
+#EXTINF:-1 tvg-id="a" group-title="News, Sport",Channel A
+https://stream/a.ts
+#EXTINF:-1,Channel B
+#EXTGRP:Kids
+https://stream/b.ts""")
+  assertEquals(listOf("Channel A", "Channel B"), channels.map { it.name })
+  assertEquals(listOf("News, Sport", "Kids"), channels.map { it.group })
+ }
  @Test fun ignoresMalformedEntries() { assertTrue(M3uParser.parse("""#EXTM3U
 #EXTINF:-1,No URL""").isEmpty()) }
 

@@ -5,6 +5,14 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PlaybackRecoveryTest {
+    @Test
+    fun frozenPictureIsRecoveredAfterEightSecondsButOnlyTwicePerStream() {
+        org.junit.Assert.assertFalse(PlaybackRecoveryPolicy.shouldRecoverPicture(6_000, 0))
+        org.junit.Assert.assertTrue(PlaybackRecoveryPolicy.shouldRecoverPicture(8_000, 0))
+        org.junit.Assert.assertTrue(PlaybackRecoveryPolicy.shouldRecoverPicture(8_000, 1))
+        org.junit.Assert.assertFalse(PlaybackRecoveryPolicy.shouldRecoverPicture(60_000, 2))
+    }
+
     @Test fun retryStateAdvancesThenBecomesUnavailable() {
         assertEquals(PlaybackRecoveryPolicy.RetryPlan(1, 1_000L), PlaybackRecoveryPolicy.nextRetry(0))
         assertEquals(PlaybackRecoveryPolicy.RetryPlan(2, 2_500L), PlaybackRecoveryPolicy.nextRetry(1))

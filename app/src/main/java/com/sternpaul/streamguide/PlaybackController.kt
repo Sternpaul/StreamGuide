@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -40,6 +41,8 @@ class PlaybackController(
     private var retryJob: Job? = null
     private var bufferingJob: Job? = null
     private var stableJob: Job? = null
+    private var watchdogJob: Job? = null
+    private var pictureRecoveries = 0
 
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(value: Boolean) {
@@ -47,8 +50,9 @@ class PlaybackController(
             val current = player ?: return
             if (current.playbackState == Player.STATE_READY) info = if (value) "" else "Paused"
             stableJob?.cancel()
+            watchdogJob?.cancel()
             // Only a stream that has stayed up earns a fresh retry budget.
-            if (value) stableJob = scope.launch { delay(30_000); retries = 0 }
+            if (value) { stableJob = scope.launch { delay(30_000); retries = 0 }; watchdogJob = scope.launch { watchPicture() } }
         }
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (url == null) return
@@ -82,13 +86,13 @@ class PlaybackController(
     fun play(url: String, label: String, provider: ProviderConfig?) {
         if (this.url == url && this.provider == provider && player != null) return
         if (player == null || this.provider != provider) {
-            releasePlayer()
-            player = PlaybackPlayerFactory.create(context, provider).also { it.addListener(listener) }
             this.provider = provider
+            recreatePlayer()
         }
         val zapping = this.url != null
         this.url = url; this.label = label
         cancelJobs()
+        pictureRecoveries = 0
         retries = 0; failed = false; paused = false; diagnostic = ""; info = "Connecting…"
         player?.stop()
         // Holding Up/Down flips through channels; only the one the viewer lands on is opened.
@@ -135,6 +139,38 @@ class PlaybackController(
         current.playWhenReady = true
     }
 
+    private fun recreatePlayer() {
+        releasePlayer()
+        player = PlaybackPlayerFactory.create(context, provider).also { it.addListener(listener) }
+    }
+
+    /**
+     * Sound without a moving picture: the player reports "playing", so nothing else notices.
+     * While a video track is selected the decoder must keep rendering frames; if it renders
+     * none for [PlaybackRecoveryPolicy.frozenPictureMs] the player is rebuilt and the stream
+     * reopened. Limited per stream, so a channel that really shows a still image is left alone.
+     */
+    private suspend fun watchPicture() {
+        var lastRendered = -1
+        var frozenMs = 0L
+        while (true) {
+            delay(PlaybackRecoveryPolicy.pictureCheckIntervalMs)
+            val current = player ?: return
+            if (url == null || !current.isPlaying) return
+            if (!current.currentTracks.isTypeSelected(C.TRACK_TYPE_VIDEO)) { frozenMs = 0; continue }
+            val rendered = current.videoDecoderCounters?.also { it.ensureUpdated() }?.renderedOutputBufferCount ?: 0
+            frozenMs = if (rendered == lastRendered) frozenMs + PlaybackRecoveryPolicy.pictureCheckIntervalMs else 0
+            lastRendered = rendered
+            if (PlaybackRecoveryPolicy.shouldRecoverPicture(frozenMs, pictureRecoveries)) {
+                pictureRecoveries++
+                onError("Playback · $label", "Picture frozen while sound continued · restarting stream ($pictureRecoveries/${PlaybackRecoveryPolicy.maxPictureRecoveries})")
+                info = "Restoring picture"
+                scope.launch { recreatePlayer(); load() }
+                return
+            }
+        }
+    }
+
     private fun scheduleRecovery(message: String) {
         if (url == null || retryJob?.isActive == true) return
         val plan = PlaybackRecoveryPolicy.nextRetry(retries)
@@ -156,8 +192,8 @@ class PlaybackController(
     }
 
     private fun cancelJobs() {
-        loadJob?.cancel(); retryJob?.cancel(); bufferingJob?.cancel(); stableJob?.cancel()
-        loadJob = null; retryJob = null; bufferingJob = null; stableJob = null
+        loadJob?.cancel(); retryJob?.cancel(); bufferingJob?.cancel(); stableJob?.cancel(); watchdogJob?.cancel()
+        loadJob = null; retryJob = null; bufferingJob = null; stableJob = null; watchdogJob = null
     }
 
     private fun releasePlayer() {

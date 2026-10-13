@@ -52,6 +52,7 @@ private val Glass = Color(0xD90A0D12)
     var groupIndex by remember { mutableIntStateOf(0) }
     var activity by remember { mutableIntStateOf(0) }
     val select = remember { PressTracker() }
+    val backPressedHere = remember { booleanArrayOf(false) }
     val now = rememberNow()
     val canSwitchGroups = state.playbackSourceScreen != AppScreen.SEARCH
 
@@ -100,6 +101,12 @@ private val Glass = Color(0xD90A0D12)
         }
     }
     fun onKey(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            // A long Back in the guide opens this screen while the key is still held; its
+            // release must not count as a Back press here and close the player again.
+            if (event.action == KeyEvent.ACTION_DOWN) { if (event.repeatCount == 0) backPressedHere[0] = true; return !backPressedHere[0] }
+            return (!backPressedHere[0]).also { backPressedHere[0] = false }
+        }
         if (isSelectKey(event.keyCode)) return select.handle(event, ::activate)
         val action = PlayerRemotePolicy.action(event.keyCode)
         if (action == PlayerRemoteAction.NONE || action == PlayerRemoteAction.TOGGLE_OVERLAY) return false

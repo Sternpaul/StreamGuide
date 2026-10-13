@@ -12,34 +12,47 @@ object M3uParser {
     fun parse(input: InputStream): List<Channel> {
         val channels = mutableListOf<Channel>()
         val seenIds = mutableSetOf<String>()
+        val seenStreams = mutableSetOf<String>()
         var pendingInfo: String? = null
+        var pendingGroup: String? = null
 
         input.bufferedReader().useLines { lines ->
             lines.forEach { rawLine ->
                 val line = rawLine.trim()
                 when {
-                    line.startsWith("#EXTINF", ignoreCase = true) -> pendingInfo = line
+                    line.startsWith("#EXTINF", ignoreCase = true) -> { pendingInfo = line; pendingGroup = null }
+                    line.startsWith("#EXTGRP:", ignoreCase = true) -> pendingGroup = line.substringAfter(':').trim()
                     line.isBlank() || line.startsWith("#") -> Unit
                     pendingInfo != null -> {
                         val info = pendingInfo!!
+                        val extGroup = pendingGroup
                         pendingInfo = null
+                        pendingGroup = null
                         if (!isStreamUrl(line) || isOnDemandUrl(line)) return@forEach
 
                         val attrs = attribute.findAll(info).associate {
                             it.groupValues[1].lowercase() to it.groupValues[2]
                         }
-                        val name = info.substringAfter(',', "").trim()
+                        // Attribute values may contain commas; the name starts after the last attribute.
+                        val name = attribute.replace(info, "").substringAfter(',', "").trim()
                         if (name.isBlank()) return@forEach
 
                         val tvgId = attrs["tvg-id"].orEmpty()
-                        val id = tvgId.ifBlank { stableId(line) }
-                        if (!seenIds.add(id)) return@forEach
+                        // Providers reuse one tvg-id for the SD/HD/backup variants of a channel. The
+                        // first keeps the plain id (so saved favourites survive); the others get
+                        // their own id instead of being dropped. Only the same stream twice is skipped.
+                        if (!seenStreams.add("$tvgId\n$line")) return@forEach
+                        var id = tvgId.ifBlank { stableId(line) }
+                        if (!seenIds.add(id)) {
+                            id = "$tvgId#${stableId(line)}"
+                            if (tvgId.isBlank() || !seenIds.add(id)) return@forEach
+                        }
 
                         channels += Channel(
                             id = id,
                             name = name,
                             url = line,
-                            group = attrs["group-title"].orEmpty().ifBlank { "Other" },
+                            group = attrs["group-title"].orEmpty().trim().ifBlank { extGroup.orEmpty() }.ifBlank { "Other" },
                             tvgId = tvgId,
                             logoUrl = attrs["tvg-logo"].orEmpty(),
                             providerOrder = channels.size,

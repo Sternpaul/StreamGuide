@@ -66,6 +66,7 @@ private val NavItems = listOf(
     var navIndex by remember { mutableIntStateOf(0) }
     val select = remember { PressTracker() }
     val pageSize = remember { intArrayOf(8) }
+    val backHeld = remember { booleanArrayOf(false) }
     val now = rememberNow()
 
     val channels = state.visibleChannels
@@ -157,6 +158,14 @@ private val NavItems = listOf(
     }
     fun onKey(event: KeyEvent): Boolean {
         val code = event.keyCode
+        if (code == KeyEvent.KEYCODE_BACK) {
+            // Holding Back jumps to the running channel in full screen. A short press is left
+            // alone so it still closes the drawer / returns to now / arms exit.
+            if (event.action == KeyEvent.ACTION_UP) return backHeld[0].also { backHeld[0] = false }
+            if (event.repeatCount == 0) { backHeld[0] = false; return false }
+            if (!backHeld[0]) backHeld[0] = vm.showPlayer()
+            return backHeld[0]
+        }
         if (isSelectKey(code)) return select.handle(event, ::activate, ::toggleFavorite)
         val handled = code in HandledKeys
         if (event.action != KeyEvent.ACTION_DOWN || !handled) return handled

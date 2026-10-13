@@ -7,6 +7,14 @@ object PlaybackRecoveryPolicy {
     const val bufferingTimeoutMs = 15_000L
     private val retryDelaysMs = longArrayOf(1_000L, 2_500L, 5_000L)
 
+    const val pictureCheckIntervalMs = 2_000L
+    const val frozenPictureMs = 8_000L
+    const val maxPictureRecoveries = 2
+
+    /** A playing stream with a video track that has rendered no new frame for [frozenMs]. */
+    fun shouldRecoverPicture(frozenMs: Long, recoveriesSoFar: Int): Boolean =
+        frozenMs >= frozenPictureMs && recoveriesSoFar < maxPictureRecoveries
+
     data class RetryPlan(val attempt: Int, val delayMs: Long)
 
     /** Returns the next automatic retry, or null once the retry budget is exhausted. */

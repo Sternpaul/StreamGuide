@@ -15,6 +15,9 @@ StreamGuide provides no channels or media. Use only sources you are authorized t
 - XMLTV and XMLTV.gz programme guides
 - Provider-specific User-Agent and HTTP referer headers for playlist, EPG and Media3 playback requests
 - Streaming playlist and XMLTV parsing for large providers
+- Categories come from each entry's `group-title` (or `#EXTGRP`); entries without one go to **Other**
+- Channels that share one `tvg-id` (SD/HD/backup variants) are all kept and share the same guide data; only the identical stream listed twice is skipped
+- Skipped on import: on-demand entries (`/movie/`, `/series/`), entries without a name, and URLs that are not HTTP, HTTPS or RTSP
 - Transactional SQLite EPG storage with indexed time/channel queries
 - Automatic migration of existing local JSON-lines EPG data
 - Last-good guide retention when an EPG refresh fails
@@ -50,6 +53,7 @@ VOD, series and recording are intentionally excluded.
 - Left/Right seek when the stream is seekable; on a non-seekable live stream Left opens the channel list
 - Remote Play/Pause media key controls playback, also from the guide
 - Bounded automatic reconnect attempts with buffering timeout and error-code diagnostics; OK retries after a terminal failure
+- A frozen picture with running sound is detected (no new video frame for eight seconds) and the stream is reopened, at most twice per stream; each recovery is written to the error log
 - Playback keeps the display awake and stops when the app leaves the foreground
 - Provider headers are applied to live, catch-up and Multiview playback
 
@@ -130,6 +134,7 @@ The matching short URL is `aftv.news/8464714`. Existing releases update in place
 - **Play/Pause:** pause or resume the running channel
 - **Options/Menu:** channel or category actions
 - **Back:** close the categories, return to now, then press twice to exit
+- **Long Back:** return to the running channel in full screen
 
 ### Playback
 
