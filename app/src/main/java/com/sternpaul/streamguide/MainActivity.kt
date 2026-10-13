@@ -258,7 +258,7 @@ class MainActivity : ComponentActivity() {
     Row(
         Modifier.fillMaxWidth().height(48.dp).background(if (focused) FocusFill else Cell)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) vm.selectChannel(channel.id) }
-            .combinedClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
+            .remoteClickable(onClick = { vm.play(channel.id) }, onLongClick = { vm.toggleFavorite(channel.id) })
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -318,7 +318,7 @@ class MainActivity : ComponentActivity() {
     val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(MediaItem.fromUri(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
     LaunchedEffect(active) { player.volume = if(active) 1f else 0f }
     DisposableEffect(player) { onDispose { player.release() } }
-    Box(modifier.background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.combinedClickable(onClick=onActivate,onLongClick=onRemove)) {
+    Box(modifier.background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.remoteClickable(onClick=onActivate,onLongClick=onRemove)) {
         AndroidView(factory={ PlayerView(it).apply { this.player=player;useController=false;layoutParams=ViewGroup.LayoutParams(-1,-1) } },update={it.player=player},modifier=Modifier.fillMaxSize())
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0xCC10151C)).padding(11.dp),verticalAlignment=Alignment.CenterVertically) { if(active) Icon(Icons.AutoMirrored.Filled.VolumeUp,null,tint=Focus,modifier=Modifier.size(17.dp));Spacer(Modifier.width(7.dp));Text(channel.displayName,Modifier.weight(1f),fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis) }
         if(focused || active) Box(Modifier.matchParentSize().border(3.dp, if(focused) FocusFill else Focus))

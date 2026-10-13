@@ -42,6 +42,7 @@ VOD, series and recording are intentionally excluded.
 - Two-, three- or six-hour guide width configured globally in Settings
 - First Back press on Live TV is captured; press Back again to exit
 - Search across channel and programme titles in every category without loading the complete EPG into memory
+- Long Select on a search result toggles favorite
 - Each category remembers its last channel
 
 ### Playback

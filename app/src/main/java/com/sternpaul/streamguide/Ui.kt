@@ -5,6 +5,8 @@ package com.sternpaul.streamguide
 import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
@@ -135,6 +137,17 @@ internal class PressTracker {
         }
         return true
     }
+}
+
+/**
+ * Focusable item whose Select key distinguishes a click from a long press. Compose's own
+ * combinedClickable only reports long presses from touch, never from a remote.
+ */
+@Composable internal fun Modifier.remoteClickable(onClick: () -> Unit, onLongClick: () -> Unit): Modifier {
+    val tracker = remember { PressTracker() }
+    return this.onKeyEvent { event ->
+        isSelectKey(event.nativeKeyEvent.keyCode) && tracker.handle(event.nativeKeyEvent, onClick, onLongClick)
+    }.focusable()
 }
 
 internal fun isSelectKey(keyCode: Int) =
