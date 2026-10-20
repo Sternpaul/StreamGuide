@@ -707,13 +707,14 @@ private fun guideRange(startMs: Long, endMs: Long): String = if (startMs <= 0 ||
                 color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
             Text("A playlist file picked with Choose file is read by Android and the app that stores it, not through the proxy.",
                 color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
-            validation?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
-            val test = state.proxyTest
-            if (test.message.isNotBlank()) Text(test.message, color = when { test.running -> TextMuted; test.success -> Color(0xFF1F9D6B); else -> MaterialTheme.colorScheme.error },
-                fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp))
         }
+        // Outside the scrolling fields: the result must be visible while focus stays on the buttons.
+        val test = state.proxyTest
+        val result = validation ?: test.message.ifBlank { null }
+        if (result != null) Text(result, color = when { validation != null -> MaterialTheme.colorScheme.error; test.running -> TextMuted; test.success -> Color(0xFF1F9D6B); else -> MaterialTheme.colorScheme.error },
+            fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Test connection asks ${com.sternpaul.streamguide.data.ProxyCheck.SERVICE} which public IP and location it sees.", color = TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Text("Test connection asks ${com.sternpaul.streamguide.data.ProxyCheck.SERVICE} (or ${com.sternpaul.streamguide.data.ProxyCheck.FALLBACK_SERVICE}) which public IP and location it sees.", color = TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
             TvButton({ validation = null; vm.testProxy(entered()) }) { Icon(Icons.Default.NetworkCheck, null); Spacer(Modifier.width(6.dp)); Text(if (state.proxyTest.running) "Testing…" else "Test connection") }
             Spacer(Modifier.width(10.dp))

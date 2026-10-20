@@ -174,7 +174,7 @@ Settings contains functional controls for:
 - Not covered: a playlist file picked with **Choose file** is read by Android and the app that stores it (e.g. a cloud drive). The system installer opens an update that StreamGuide has already downloaded; it does not download anything itself.
 - Host names are resolved by the proxy (HTTP `CONNECT` / SOCKS5 with a domain name), not by the Fire TV.
 - If the proxy is on but cannot be reached or rejects the login, requests fail with **Proxy unreachable** or **Proxy login failed**. StreamGuide never falls back to your direct connection.
-- **Test connection** sends one request through the entered proxy to `ipinfo.io` and shows the public IP and location the internet sees. Nothing is sent to ipinfo.io unless you press it.
+- **Test connection** sends one request through the entered proxy to `ipinfo.io` and shows the public IP and location the internet sees. If ipinfo.io refuses (it blocks some VPN addresses), it asks `api.ipify.org` instead, which reports the IP without a location. Nothing is sent to either service unless you press it.
 - The proxy login is stored in Android's encrypted preferences and is never written to the error log.
 - SOCKS5 needs Android 7 or newer (all current Fire TV models).
 

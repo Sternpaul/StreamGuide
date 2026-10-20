@@ -572,9 +572,11 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
                 ProxyTestState(success = true, message = listOf("Public IP ${seen.ip}", seen.location, seen.network).filter { it.isNotBlank() }.joinToString(" · "))
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
+            } catch (error: Throwable) {
+                // Every outcome is shown; a test that ends silently looks like it never ran.
                 val message = ProxyErrors.find(error)?.message
-                    ?: "Test failed: ${DiagnosticMessageSanitizer.sanitize(error.message ?: error.javaClass.simpleName).take(160)}"
+                    ?: if (error is java.io.InterruptedIOException) "Test failed: no answer within 20 seconds through ${candidate.address}"
+                    else "Test failed: ${DiagnosticMessageSanitizer.sanitize(error.message ?: error.javaClass.simpleName).take(160)}"
                 store.appendDiagnosticError("Proxy test", message)
                 ProxyTestState(message = message)
             }
