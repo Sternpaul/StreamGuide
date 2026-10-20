@@ -10,8 +10,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-class PlaylistRepository(private val store: AppStore) {
-    private val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).followRedirects(true).build()
+class PlaylistRepository(private val store: AppStore, http: HttpClients) {
+    private val currentClient = http.derived { connectTimeout(30, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).followRedirects(true) }
+    private val client: OkHttpClient get() = currentClient()
     private val refreshMutex = Mutex()
 
     suspend fun refreshAll(onProgress: suspend (String) -> Unit = {}): RefreshStatus = withContext(Dispatchers.IO) {

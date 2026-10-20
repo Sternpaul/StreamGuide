@@ -18,9 +18,11 @@ import org.json.JSONObject
 
 data class AppRelease(val version: String, val downloadUrl: String, val size: Long, val sha256: String?)
 
-class AppUpdateRepository(private val context: Context) {
-    private val client = OkHttpClient.Builder().followSslRedirects(false).connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).callTimeout(5, TimeUnit.MINUTES).build()
+class AppUpdateRepository(private val context: Context, http: HttpClients) {
+    private val currentClient = http.derived {
+        followSslRedirects(false).connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(5, TimeUnit.MINUTES)
+    }
+    private val client: OkHttpClient get() = currentClient()
 
     suspend fun latest(): AppRelease? = withContext(Dispatchers.IO) {
         val request = Request.Builder().url("https://api.github.com/repos/Sternpaul/StreamGuide/releases/latest")

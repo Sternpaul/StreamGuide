@@ -25,7 +25,7 @@ class RemoteInteractionPolicyTest {
 
     @Test
     fun backFromSettingsChildrenReturnsToSettings() {
-        for (screen in listOf(AppScreen.DIAGNOSTICS, AppScreen.ORGANIZE, AppScreen.EDIT_PROVIDER)) {
+        for (screen in listOf(AppScreen.DIAGNOSTICS, AppScreen.PROXY, AppScreen.ORGANIZE, AppScreen.EDIT_PROVIDER)) {
             assertEquals(BackAction.GO_TO_SETTINGS, BackNavigationPolicy.action(screen, exitArmed = false))
         }
     }

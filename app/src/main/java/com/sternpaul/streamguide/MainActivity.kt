@@ -154,6 +154,7 @@ class MainActivity : ComponentActivity() {
                 AppScreen.MULTIVIEW -> MultiviewScreen(state, vm)
                 AppScreen.SETTINGS -> SettingsScreen(state, vm)
                 AppScreen.DIAGNOSTICS -> DiagnosticsScreen(state, vm)
+                AppScreen.PROXY -> ProxyScreen(state, vm)
                 AppScreen.ORGANIZE -> OrganizeScreen(state, vm)
             }
             // One video view for the whole app: it only changes size, so going back to the
@@ -449,6 +450,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         item {
+            SettingsCard("NETWORK") {
+                SettingRow(Icons.Default.VpnLock, "Proxy",
+                    if (state.proxy.enabled) "${state.proxy.type.label} · ${state.proxy.address}" else "Off") { vm.navigate(AppScreen.PROXY) }
+            }
+        }
+        item {
             SettingsCard("DIAGNOSTICS") {
                 SettingRow(Icons.Default.Analytics, "Diagnostics", "") { vm.navigate(AppScreen.DIAGNOSTICS) }
             }
@@ -662,6 +669,55 @@ private fun guideRange(startMs: Long, endMs: Long): String = if (startMs <= 0 ||
         Spacer(Modifier.height(16.dp)); Row(horizontalArrangement=Arrangement.spacedBy(9.dp)) {
             if(state.importFinished) TvButton(vm::finishImport, modifier=Modifier.focusRequester(actionFocus), selected=true) { Icon(Icons.Default.LiveTv,null);Spacer(Modifier.width(7.dp));Text("Open Live TV") }
             if(state.error!=null) { TvButton(vm::retryImport,modifier=Modifier.focusRequester(actionFocus),selected=true){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(7.dp));Text("Try again")};TvButton(vm::editProviderFromImport){Icon(Icons.Default.Edit,null);Spacer(Modifier.width(7.dp));Text("Edit details")} }
+        }
+    }
+}
+
+@Composable private fun ProxyScreen(state: UiState, vm: MainViewModel) {
+    val saved = state.proxy
+    var enabled by remember(saved) { mutableStateOf(saved.enabled) }
+    var type by remember(saved) { mutableStateOf(saved.type) }
+    var host by remember(saved) { mutableStateOf(saved.host) }
+    var port by remember(saved) { mutableStateOf(if (saved.port > 0) saved.port.toString() else "") }
+    var username by remember(saved) { mutableStateOf(saved.username) }
+    var password by remember(saved) { mutableStateOf(saved.password) }
+    var validation by remember { mutableStateOf<String?>(null) }
+    fun entered() = ProxySettings(enabled, type, host, port.toIntOrNull() ?: 0, username, password)
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { firstFocus.requestFocus() } }
+    Column(Modifier.fillMaxSize().background(Bg).padding(horizontal = 120.dp, vertical = 28.dp)) {
+        Text("Proxy", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(12.dp))
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+            SettingToggleRow(Icons.Default.VpnLock, "Use proxy", "Playlist, TV guide, logos, playback and app updates", enabled, Modifier.focusRequester(firstFocus)) { enabled = !enabled }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ProxyType.entries.forEach { option -> TvButton({ type = option }, selected = type == option) { Text(option.label) } }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.weight(3f)) { SetupField("Host (e.g. 192.168.1.10)", host, { host = it.take(253) }) }
+                Box(Modifier.weight(1f)) { SetupField("Port", port, { port = it.filter(Char::isDigit).take(5) }) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.weight(1f)) { SetupField("Username (optional)", username, { username = it.take(255) }) }
+                Box(Modifier.weight(1f)) { SetupField("Password (optional)", password, { password = it.take(255) }, true) }
+            }
+            Text("HTTP and SOCKS5 proxies do not encrypt anything. Your traffic is only protected if the proxy itself runs behind a VPN, for example gluetun on your NAS. A proxy login sent across the internet over plain HTTP or SOCKS5 can be read.",
+                color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            Text("A playlist file picked with Choose file is read by Android and the app that stores it, not through the proxy.",
+                color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+            validation?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
+            val test = state.proxyTest
+            if (test.message.isNotBlank()) Text(test.message, color = when { test.running -> TextMuted; test.success -> Color(0xFF1F9D6B); else -> MaterialTheme.colorScheme.error },
+                fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp))
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Test connection asks ${com.sternpaul.streamguide.data.ProxyCheck.SERVICE} which public IP and location it sees.", color = TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(12.dp))
+            TvButton({ validation = null; vm.testProxy(entered()) }) { Icon(Icons.Default.NetworkCheck, null); Spacer(Modifier.width(6.dp)); Text(if (state.proxyTest.running) "Testing…" else "Test connection") }
+            Spacer(Modifier.width(10.dp))
+            TvButton({ validation = vm.saveProxy(entered()) }, selected = true, modifier = Modifier.width(200.dp)) { Text("Save") }
         }
     }
 }

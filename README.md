@@ -164,6 +164,40 @@ Settings contains functional controls for:
 - Provider connection editing
 - Channel management
 - EPG mapping and refresh diagnostics
+- Optional HTTP or SOCKS5 proxy (see below)
+
+## Proxy
+
+**Settings → Network → Proxy** sends StreamGuide's traffic, and only StreamGuide's, through an HTTP or SOCKS5 proxy, for example a VPN-backed proxy. It is off by default.
+
+- Covered: the playlist and Xtream API, the TV guide, channel logos, live/catch-up/Multiview playback and app update checks and downloads.
+- Not covered: a playlist file picked with **Choose file** is read by Android and the app that stores it (e.g. a cloud drive). The system installer opens an update that StreamGuide has already downloaded; it does not download anything itself.
+- Host names are resolved by the proxy (HTTP `CONNECT` / SOCKS5 with a domain name), not by the Fire TV.
+- If the proxy is on but cannot be reached or rejects the login, requests fail with **Proxy unreachable** or **Proxy login failed**. StreamGuide never falls back to your direct connection.
+- **Test connection** sends one request through the entered proxy to `ipinfo.io` and shows the public IP and location the internet sees. Nothing is sent to ipinfo.io unless you press it.
+- The proxy login is stored in Android's encrypted preferences and is never written to the error log.
+- SOCKS5 needs Android 7 or newer (all current Fire TV models).
+
+An HTTP or SOCKS5 proxy does not encrypt anything by itself. Your traffic is only protected if the proxy sits behind a VPN, like gluetun on a server in your home network. Across the internet, a proxy login and plain-HTTP streams can be read by anyone on the path.
+
+### Example: gluetun on a NAS (HTTP proxy)
+
+Enable gluetun's built-in HTTP proxy in its container settings:
+
+```yaml
+environment:
+  - HTTPPROXY=on
+  - HTTPPROXY_USER=streamguide
+  - HTTPPROXY_PASSWORD=choose-a-password
+ports:
+  - 8888:8888/tcp
+```
+
+In StreamGuide choose **HTTP**, host = the NAS's LAN address (e.g. `192.168.1.10`), port `8888`, and the user/password from above. Press **Test connection**: it should show the VPN server's IP and location, not your home connection.
+
+### Example: a VPN provider's SOCKS5 proxy
+
+Many VPN providers offer a SOCKS5 proxy with separate proxy credentials (check your provider's help pages for the current host name, port, usually `1080`, and where to create the proxy login). In StreamGuide choose **SOCKS5**, enter that host, port, username and password, and press **Test connection**. Some providers only accept their SOCKS5 proxy from inside their VPN; in that case it cannot be used on its own from a Fire TV. Without a VPN tunnel, the connection to the proxy is not encrypted.
 
 ## Build
 

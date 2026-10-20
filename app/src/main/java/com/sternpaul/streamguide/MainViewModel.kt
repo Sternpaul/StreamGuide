@@ -7,13 +7,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sternpaul.streamguide.core.*
+import com.sternpaul.streamguide.data.ProxyCheck
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppScreen { GUIDE, SEARCH, SETTINGS, DIAGNOSTICS, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
+enum class AppScreen { GUIDE, SEARCH, SETTINGS, DIAGNOSTICS, PROXY, ORGANIZE, EDIT_PROVIDER, IMPORT_STATUS, MULTIVIEW, PLAYER, SETUP }
 enum class ChannelSort { MANUAL, ALPHABETICAL, PROVIDER }
 enum class OverlayMenu { NONE, APP, CHANNEL }
 enum class OptionsContext { CHANNEL, GROUP }
@@ -66,6 +67,8 @@ private val groupsMemo = Memo<List<String>>()
 private val visibleChannelsMemo = Memo<List<Channel>>()
 private val channelsByIdMemo = Memo<Map<String, Channel>>()
 
+data class ProxyTestState(val running: Boolean = false, val success: Boolean = false, val message: String = "")
+
 /** Guide focus that must survive leaving the screen but must not churn UiState. */
 class GuideUiState {
     /** Time the programme cursor sits on; null follows the current time. */
@@ -113,6 +116,8 @@ data class UiState(
     val importReports: List<ImportReport> = emptyList(),
     val diagnosticsLoading: Boolean = false,
     val diagnosticsError: String = "",
+    val proxy: ProxySettings = ProxySettings(),
+    val proxyTest: ProxyTestState = ProxyTestState(),
     val overlayMenu: OverlayMenu = OverlayMenu.NONE
 ) {
     private val visibleGroupCounts: Map<String, Int> by lazy(LazyThreadSafetyMode.NONE) {
@@ -178,6 +183,8 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
     val appUpdates = AppUpdateController(app, viewModelScope)
     private val store = app.container.store
     private val repository = app.container.repository
+    private val http = app.container.http
+    private var proxyTestJob: Job? = null
     private var searchJob: Job? = null
     private var playbackChannelIds: List<String> = emptyList()
     private var diagnosticsRequestId: Long = 0
@@ -207,14 +214,16 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             timelineHours = store.timelineHours(),
             epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
-            diagnosticErrors = store.diagnosticErrors(), importReports = store.importReports(),
+            diagnosticErrors = store.diagnosticErrors(), importReports = store.importReports(), proxy = store.proxySettings(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
         )
         return initial.copy(selectedChannelId = initial.visibleChannels.firstOrNull()?.id)
     }
 
     fun navigate(screen: AppScreen) {
-        state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "", overlayMenu = NavigationPolicy.afterDestinationSelected())
+        if (state.screen == AppScreen.PROXY && screen != AppScreen.PROXY) { proxyTestJob?.cancel(); proxyTestJob = null }
+        state = state.copy(screen = screen, query = if (screen == AppScreen.SEARCH) state.query else "", overlayMenu = NavigationPolicy.afterDestinationSelected(),
+            proxyTest = if (screen == AppScreen.PROXY) ProxyTestState() else state.proxyTest)
         if (screen == AppScreen.SETTINGS) refreshEpgDiagnostics()
     }
     fun refreshEpgDiagnostics() {
@@ -539,6 +548,40 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
 
     fun setEpgHours(hours: Int) { store.setEpgHours(hours); state = state.copy(epgHours = hours); app.scheduleEpg() }
     fun setEpgAutoUpdate(enabled: Boolean) { store.setEpgAutoUpdate(enabled); state = state.copy(epgAutoUpdate = enabled); app.scheduleEpg() }
+    /** Returns why [settings] cannot be saved, or null once every client uses them. */
+    fun saveProxy(settings: ProxySettings): String? {
+        val cleaned = settings.copy(host = settings.host.trim(), username = settings.username.trim())
+        ProxyValidation.problem(cleaned, http.socksSupported)?.let { return it }
+        proxyTestJob?.cancel()
+        store.saveProxySettings(cleaned)
+        http.apply(cleaned)
+        state = state.copy(proxy = cleaned, proxyTest = ProxyTestState())
+        navigate(AppScreen.SETTINGS)
+        return null
+    }
+
+    /** Asks [ProxyCheck.SERVICE] through the entered (not necessarily saved) proxy which address it sees. */
+    fun testProxy(settings: ProxySettings) {
+        val candidate = settings.copy(enabled = true, host = settings.host.trim(), username = settings.username.trim())
+        ProxyValidation.problem(candidate, http.socksSupported)?.let { state = state.copy(proxyTest = ProxyTestState(message = it)); return }
+        proxyTestJob?.cancel()
+        state = state.copy(proxyTest = ProxyTestState(running = true, message = "Connecting through ${candidate.address}…"))
+        proxyTestJob = viewModelScope.launch {
+            val result = try {
+                val seen = withContext(Dispatchers.IO) { ProxyCheck.publicAddress(http, candidate) }
+                ProxyTestState(success = true, message = listOf("Public IP ${seen.ip}", seen.location, seen.network).filter { it.isNotBlank() }.joinToString(" · "))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val message = ProxyErrors.find(error)?.message
+                    ?: "Test failed: ${DiagnosticMessageSanitizer.sanitize(error.message ?: error.javaClass.simpleName).take(160)}"
+                store.appendDiagnosticError("Proxy test", message)
+                ProxyTestState(message = message)
+            }
+            state = state.copy(proxyTest = result, diagnosticErrors = store.diagnosticErrors())
+        }
+    }
+
     fun setUpdatePlaylistOnStart(enabled: Boolean) { store.setUpdatePlaylistOnStart(enabled); state = state.copy(updatePlaylistOnStart = enabled) }
     fun clearProvider() {
         viewModelScope.launch {

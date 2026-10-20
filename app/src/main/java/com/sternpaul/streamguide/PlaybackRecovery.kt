@@ -26,6 +26,8 @@ object PlaybackRecoveryPolicy {
     fun delayForRetry(attempt: Int): Long? = retryDelaysMs.getOrNull(attempt - 1)
 
     fun diagnostic(error: PlaybackException): String {
+        // "Proxy unreachable" tells the viewer more than an IO error code.
+        com.sternpaul.streamguide.core.ProxyErrors.find(error)?.let { return it.message.orEmpty() }
         val cause = error.cause?.javaClass?.simpleName?.takeIf { it.isNotBlank() }
         return listOfNotNull(error.errorCodeName, cause).distinct().joinToString(" · ")
     }

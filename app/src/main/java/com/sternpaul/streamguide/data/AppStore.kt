@@ -38,6 +38,28 @@ class AppStore(private val context: Context) {
         epgDatabase.clear()
     }
 
+    /** Proxy host, port and login live in encrypted storage; they are kept when the playlist is removed. */
+    fun proxySettings(): ProxySettings {
+        // A saved proxy that cannot be read stays enabled (and blocks traffic) rather than silently turning off.
+        val unreadable = ProxySettings(enabled = true)
+        val raw = runCatching { secure.getString("proxy", null) }.getOrElse { return unreadable } ?: return ProxySettings()
+        return runCatching { proxyFromJson(JSONObject(raw)) }.getOrDefault(unreadable)
+    }
+    private fun proxyFromJson(json: JSONObject) = ProxySettings(
+        enabled = json.optBoolean("enabled"),
+        type = runCatching { ProxyType.valueOf(json.optString("type")) }.getOrDefault(ProxyType.HTTP),
+        host = json.optString("host"), port = json.optInt("port"),
+        username = json.optString("username"), password = json.optString("password")
+    )
+    @android.annotation.SuppressLint("ApplySharedPref")
+    fun saveProxySettings(settings: ProxySettings) {
+        val json = JSONObject().put("enabled", settings.enabled).put("type", settings.type.name)
+            .put("host", settings.host).put("port", settings.port)
+            .put("username", settings.username).put("password", settings.password)
+        // commit, not apply: the setting must be on disk before traffic switches to it.
+        secure.edit().putString("proxy", json.toString()).commit()
+    }
+
     fun getChannels(): List<Channel> = readModels(channelsFile, ::channelFromJson)
     fun saveChannels(channels: List<Channel>) = JsonLinesStore.write(channelsFile, channels.asSequence()) { channelToJson(it).toString() }
     /** Channels the provider stopped listing; their saved state returns when they do. */

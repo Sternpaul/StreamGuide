@@ -33,7 +33,7 @@ data class AppUpdateState(
 
 class AppUpdateController(context: Context, private val scope: CoroutineScope) {
     private val prefs = context.getSharedPreferences("app_updates", Context.MODE_PRIVATE)
-    private val repository = AppUpdateRepository(context.applicationContext)
+    private val repository = AppUpdateRepository(context.applicationContext, (context.applicationContext as StreamGuideApp).container.http)
     private var downloadJob: Job? = null
     private var waitingForInstallPermission = false
     var state by mutableStateOf(AppUpdateState(automatic = prefs.getBoolean("automatic", true)))

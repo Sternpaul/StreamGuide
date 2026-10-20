@@ -1,7 +1,7 @@
 package com.sternpaul.streamguide
 
 import android.content.Context
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.sternpaul.streamguide.core.ProviderConfig
@@ -10,8 +10,10 @@ import com.sternpaul.streamguide.core.ProviderHeaders
 object PlaybackPlayerFactory {
     @androidx.media3.common.util.UnstableApi
     fun create(context: Context, provider: ProviderConfig?): ExoPlayer {
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
+        // Streams, playlists, segments and keys use the shared client, so they follow the proxy.
+        // HTTP(S) only: no UDP/RTMP data source exists that could go around it.
+        val http = (context.applicationContext as StreamGuideApp).container.http
+        val httpFactory = OkHttpDataSource.Factory(http.callFactory)
         provider?.let { config ->
             val headers = ProviderHeaders.forProvider(config)
             if (headers.isNotEmpty()) httpFactory.setDefaultRequestProperties(headers)
