@@ -56,7 +56,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.sternpaul.streamguide.core.*
@@ -316,7 +315,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun MultiTile(channel: Channel, provider: ProviderConfig?, active: Boolean, onActivate: () -> Unit, onRemove: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-    val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(MediaItem.fromUri(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
+    val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(PlaybackPlayerFactory.mediaItem(channel.url, PlaybackPlayerFactory.liveDelaySeconds(context))); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
     LaunchedEffect(active) { player.volume = if(active) 1f else 0f }
     DisposableEffect(player) { onDispose { player.release() } }
     Box(modifier.background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.remoteClickable(onClick=onActivate,onLongClick=onRemove)) {
@@ -447,6 +446,15 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 SettingRow(Icons.Default.Refresh, "Update EPG now", "", vm::refreshEpgOnly)
+            }
+        }
+        item {
+            SettingsCard("LIVE DELAY") {
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveDelay.allowedSeconds.forEach { seconds ->
+                        TvButton({ vm.setLiveDelaySeconds(seconds) }, selected = state.liveDelaySeconds == seconds) { Text(LiveDelay.label(seconds)) }
+                    }
+                }
             }
         }
         item {

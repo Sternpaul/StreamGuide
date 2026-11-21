@@ -5,7 +5,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -34,6 +33,7 @@ class PlaybackController(
     var paused by mutableStateOf(false); private set
 
     private var provider: ProviderConfig? = null
+    private var delaySeconds = 0
     private var url: String? = null
     private var label = ""
     private var retries = 0
@@ -61,7 +61,7 @@ class PlaybackController(
                 Player.STATE_BUFFERING -> {
                     info = "Buffering"
                     bufferingJob = scope.launch {
-                        delay(PlaybackRecoveryPolicy.bufferingTimeoutMs)
+                        delay(com.sternpaul.streamguide.core.LiveDelay.bufferingTimeoutMs(PlaybackRecoveryPolicy.bufferingTimeoutMs, delaySeconds))
                         if (player?.playbackState == Player.STATE_BUFFERING) scheduleRecovery("Buffering timed out")
                     }
                 }
@@ -84,8 +84,10 @@ class PlaybackController(
 
     /** Starts [url]; calling it again for the stream that is already loaded changes nothing. */
     fun play(url: String, label: String, provider: ProviderConfig?) {
-        if (this.url == url && this.provider == provider && player != null) return
-        if (player == null || this.provider != provider) {
+        // A changed live-delay setting needs a new player, since its buffer sizes are fixed.
+        val wantedDelay = PlaybackPlayerFactory.liveDelaySeconds(context)
+        if (this.url == url && this.provider == provider && delaySeconds == wantedDelay && player != null) return
+        if (player == null || this.provider != provider || delaySeconds != wantedDelay) {
             this.provider = provider
             recreatePlayer()
         }
@@ -134,14 +136,15 @@ class PlaybackController(
         val target = url ?: return
         current.stop()
         current.clearMediaItems()
-        current.setMediaItem(MediaItem.fromUri(target))
+        current.setMediaItem(PlaybackPlayerFactory.mediaItem(target, delaySeconds))
         current.prepare()
         current.playWhenReady = true
     }
 
     private fun recreatePlayer() {
         releasePlayer()
-        player = PlaybackPlayerFactory.create(context, provider).also { it.addListener(listener) }
+        delaySeconds = PlaybackPlayerFactory.liveDelaySeconds(context)
+        player = PlaybackPlayerFactory.create(context, provider, delaySeconds).also { it.addListener(listener) }
     }
 
     /**
