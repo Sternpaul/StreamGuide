@@ -132,8 +132,10 @@ class AppStore(private val context: Context) {
     fun setEpgHours(hours: Int) { require(hours in AppSettings.allowedEpgHours); prefs.edit().putInt("epg_hours", hours).apply() }
     fun timelineHours(): Int = prefs.getInt("timeline_hours", AppSettings.DEFAULT_TIMELINE_HOURS).takeIf { it in AppSettings.allowedTimelineHours } ?: AppSettings.DEFAULT_TIMELINE_HOURS
     fun setTimelineHours(hours: Int) { require(hours in AppSettings.allowedTimelineHours); prefs.edit().putInt("timeline_hours", hours).apply() }
-    fun liveDelaySeconds(): Int = com.sternpaul.streamguide.core.LiveDelay.sanitize(prefs.getInt("live_delay_seconds", com.sternpaul.streamguide.core.LiveDelay.DEFAULT_SECONDS))
+    fun liveDelaySeconds(): Int = com.sternpaul.streamguide.core.LiveDelay.sanitizeSeconds(prefs.getInt("live_delay_seconds", com.sternpaul.streamguide.core.LiveDelay.DEFAULT_SECONDS))
     fun setLiveDelaySeconds(seconds: Int) { require(seconds in com.sternpaul.streamguide.core.LiveDelay.allowedSeconds); prefs.edit().putInt("live_delay_seconds", seconds).apply() }
+    fun liveDelayActivation(): Int = com.sternpaul.streamguide.core.LiveDelay.sanitizeActivation(prefs.getInt("live_delay_activation", com.sternpaul.streamguide.core.LiveDelay.DEFAULT_ACTIVATION))
+    fun setLiveDelayActivation(stalls: Int) { require(stalls in com.sternpaul.streamguide.core.LiveDelay.allowedActivation); prefs.edit().putInt("live_delay_activation", stalls).apply() }
     fun epgAutoUpdate(): Boolean = prefs.getBoolean("epg_auto_update", true)
     fun setEpgAutoUpdate(enabled: Boolean) { prefs.edit().putBoolean("epg_auto_update", enabled).apply() }
     fun updatePlaylistOnStart(): Boolean = prefs.getBoolean("playlist_update_on_start", false)

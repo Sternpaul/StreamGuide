@@ -8,6 +8,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.sternpaul.streamguide.core.LiveDelay
 import com.sternpaul.streamguide.core.ProviderConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -33,7 +34,13 @@ class PlaybackController(
     var paused by mutableStateOf(false); private set
 
     private var provider: ProviderConfig? = null
+    private var loadControl = CushionLoadControl()
+    // Live delay for the current stream: settings read at channel start, stalls counted since.
     private var delaySeconds = 0
+    private var delayActivation = LiveDelay.DEFAULT_ACTIVATION
+    private var stalls = 0
+    private var hasPlayed = false
+    private var lastSeekAt = 0L
     private var url: String? = null
     private var label = ""
     private var retries = 0
@@ -52,6 +59,7 @@ class PlaybackController(
             stableJob?.cancel()
             watchdogJob?.cancel()
             // Only a stream that has stayed up earns a fresh retry budget.
+            if (value) hasPlayed = true
             if (value) { stableJob = scope.launch { delay(30_000); retries = 0 }; watchdogJob = scope.launch { watchPicture() } }
         }
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -59,11 +67,16 @@ class PlaybackController(
             bufferingJob?.cancel()
             when (playbackState) {
                 Player.STATE_BUFFERING -> {
-                    info = "Buffering"
-                    bufferingJob = scope.launch {
-                        delay(com.sternpaul.streamguide.core.LiveDelay.bufferingTimeoutMs(PlaybackRecoveryPolicy.bufferingTimeoutMs, delaySeconds))
-                        if (player?.playbackState == Player.STATE_BUFFERING) scheduleRecovery("Buffering timed out")
+                    // A stall is buffering after the picture already ran, not a start or a seek.
+                    if (hasPlayed && android.os.SystemClock.elapsedRealtime() - lastSeekAt > 2_000) {
+                        stalls++
+                        if (loadControl.cushionMs == 0 && LiveDelay.shouldActivate(delaySeconds, delayActivation, stalls)) {
+                            loadControl.cushionMs = delaySeconds * 1_000
+                            onError("Playback · $label", "Live delay on after $stalls stall(s) · waiting for ${delaySeconds}s of buffer")
+                        }
                     }
+                    info = "Buffering"
+                    bufferingJob = scope.launch { watchBuffering() }
                 }
                 Player.STATE_READY -> {
                     info = if (player?.isPlaying == true) "" else "Paused"
@@ -84,10 +97,8 @@ class PlaybackController(
 
     /** Starts [url]; calling it again for the stream that is already loaded changes nothing. */
     fun play(url: String, label: String, provider: ProviderConfig?) {
-        // A changed live-delay setting needs a new player, since its buffer sizes are fixed.
-        val wantedDelay = PlaybackPlayerFactory.liveDelaySeconds(context)
-        if (this.url == url && this.provider == provider && delaySeconds == wantedDelay && player != null) return
-        if (player == null || this.provider != provider || delaySeconds != wantedDelay) {
+        if (this.url == url && this.provider == provider && player != null) return
+        if (player == null || this.provider != provider) {
             this.provider = provider
             recreatePlayer()
         }
@@ -95,6 +106,10 @@ class PlaybackController(
         this.url = url; this.label = label
         cancelJobs()
         pictureRecoveries = 0
+        // Every channel starts without the cushion (unless set to "always"), so zapping stays instant.
+        val store = (context.applicationContext as StreamGuideApp).container.store
+        delaySeconds = store.liveDelaySeconds(); delayActivation = store.liveDelayActivation(); stalls = 0
+        loadControl.cushionMs = if (LiveDelay.shouldActivate(delaySeconds, delayActivation, 0)) delaySeconds * 1_000 else 0
         retries = 0; failed = false; paused = false; diagnostic = ""; info = "Connecting…"
         player?.stop()
         // Holding Up/Down flips through channels; only the one the viewer lands on is opened.
@@ -125,6 +140,7 @@ class PlaybackController(
     fun seek(forward: Boolean): Boolean {
         val current = player ?: return false
         if (!current.isCurrentMediaItemSeekable) return false
+        lastSeekAt = android.os.SystemClock.elapsedRealtime()
         if (forward) current.seekForward() else current.seekBack()
         return true
     }
@@ -136,15 +152,35 @@ class PlaybackController(
         val target = url ?: return
         current.stop()
         current.clearMediaItems()
-        current.setMediaItem(PlaybackPlayerFactory.mediaItem(target, delaySeconds))
+        // A reconnect starts the stream again; its first buffering is not a stall.
+        hasPlayed = false
+        current.setMediaItem(PlaybackPlayerFactory.mediaItem(target, delaySeconds, alwaysDelayed = delayActivation == 0))
         current.prepare()
         current.playWhenReady = true
     }
 
     private fun recreatePlayer() {
         releasePlayer()
-        delaySeconds = PlaybackPlayerFactory.liveDelaySeconds(context)
-        player = PlaybackPlayerFactory.create(context, provider, delaySeconds).also { it.addListener(listener) }
+        val cushion = loadControl.cushionMs
+        loadControl = CushionLoadControl().also { it.cushionMs = cushion }
+        player = PlaybackPlayerFactory.create(context, provider, loadControl).also { it.addListener(listener) }
+    }
+
+    /** Shows how far the live-delay cushion has filled; gives up like any buffering after a timeout. */
+    private suspend fun watchBuffering() {
+        val timeoutMs = LiveDelay.bufferingTimeoutMs(PlaybackRecoveryPolicy.bufferingTimeoutMs, loadControl.cushionMs)
+        var waitedMs = 0L
+        while (waitedMs < timeoutMs) {
+            val current = player ?: return
+            if (current.playbackState != Player.STATE_BUFFERING) return
+            val cushion = loadControl.cushionMs
+            if (cushion > 0) {
+                val target = loadControl.effectiveCushionMs.takeIf { it > 0 } ?: cushion
+                info = LiveDelay.waitingText(target, current.totalBufferedDuration)
+            }
+            delay(500); waitedMs += 500
+        }
+        if (player?.playbackState == Player.STATE_BUFFERING) scheduleRecovery("Buffering timed out")
     }
 
     /**

@@ -3,16 +3,14 @@ package com.sternpaul.streamguide
 import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import com.sternpaul.streamguide.core.LiveDelay
 import com.sternpaul.streamguide.core.ProviderConfig
 import com.sternpaul.streamguide.core.ProviderHeaders
 
 object PlaybackPlayerFactory {
     @androidx.media3.common.util.UnstableApi
-    fun create(context: Context, provider: ProviderConfig?, delaySeconds: Int = liveDelaySeconds(context)): ExoPlayer {
+    fun create(context: Context, provider: ProviderConfig?, loadControl: CushionLoadControl = CushionLoadControl()): ExoPlayer {
         // Streams, playlists, segments and keys use the shared client, so they follow the proxy.
         // HTTP(S) only: no UDP/RTMP data source exists that could go around it.
         val http = (context.applicationContext as StreamGuideApp).container.http
@@ -21,10 +19,6 @@ object PlaybackPlayerFactory {
             val headers = ProviderHeaders.forProvider(config)
             if (headers.isNotEmpty()) httpFactory.setDefaultRequestProperties(headers)
         }
-        val plan = LiveDelay.plan(delaySeconds)
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(plan.minBufferMs, plan.maxBufferMs, plan.startMs, plan.rebufferMs)
-            .build()
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .setLoadControl(loadControl)
@@ -33,13 +27,14 @@ object PlaybackPlayerFactory {
             .build()
     }
 
-    fun liveDelaySeconds(context: Context): Int = (context.applicationContext as StreamGuideApp).container.store.liveDelaySeconds()
-
-    /** HLS/DASH streams also sit [delaySeconds] behind the live edge instead of right at it. */
-    fun mediaItem(url: String, delaySeconds: Int): MediaItem {
-        val offset = LiveDelay.plan(delaySeconds).liveOffsetMs ?: return MediaItem.fromUri(url)
-        return MediaItem.Builder().setUri(url)
-            .setLiveConfiguration(MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(offset).build())
-            .build()
+    /**
+     * With a live delay, HLS/DASH streams play at normal speed instead of speeding up to catch
+     * the live edge, which would eat the cushion again. "Always" also starts that far behind.
+     */
+    fun mediaItem(url: String, delaySeconds: Int = 0, alwaysDelayed: Boolean = false): MediaItem {
+        if (delaySeconds <= 0) return MediaItem.fromUri(url)
+        val live = MediaItem.LiveConfiguration.Builder().setMinPlaybackSpeed(1f).setMaxPlaybackSpeed(1f)
+        if (alwaysDelayed) live.setTargetOffsetMs(delaySeconds * 1_000L)
+        return MediaItem.Builder().setUri(url).setLiveConfiguration(live.build()).build()
     }
 }

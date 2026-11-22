@@ -59,7 +59,7 @@ VOD, series and recording are intentionally excluded.
 - Left/Right seek when the stream is seekable; on a non-seekable live stream Left opens the channel list
 - Remote Play/Pause media key controls playback, also from the guide
 - Bounded automatic reconnect attempts with buffering timeout and error-code diagnostics; OK retries after a terminal failure
-- Live delay (**Settings → Live delay**: Off, 5, 10, 20 or 30 s, default 10 s): playback starts, and resumes after a stall, only once that much stream is buffered, and HLS streams are held that far behind the live edge, so short network drops are played out of the buffer instead of freezing the picture. Takes effect on the next channel change.
+- Live delay (**Settings → Live delay**: Off, 5, 10, 20 or 30 s, default 10 s; switches on Always or after the 1st, 2nd (default) or 3rd stall of a stream). Channels start instantly; once a stream has stalled that often, playback pauses with *Waiting 10s to avoid further buffering · 4s ready* until that much is buffered, then plays out of that cushion so short network drops don't freeze the picture. Every channel switch starts fresh without it. The buffer is kept in memory only, capped at 64 MB, and freed when the channel changes; nothing is written to storage.
 - A frozen picture with running sound is detected (no new video frame for eight seconds) and the stream is reopened, at most twice per stream; each recovery is written to the error log
 - Playback keeps the display awake and stops when the app leaves the foreground
 - Provider headers are applied to live, catch-up and Multiview playback

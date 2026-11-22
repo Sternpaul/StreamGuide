@@ -99,6 +99,7 @@ data class UiState(
     val epgHours: Int = AppSettings.DEFAULT_EPG_HOURS,
     val epgAutoUpdate: Boolean = true,
     val liveDelaySeconds: Int = com.sternpaul.streamguide.core.LiveDelay.DEFAULT_SECONDS,
+    val liveDelayActivation: Int = com.sternpaul.streamguide.core.LiveDelay.DEFAULT_ACTIVATION,
     val updatePlaylistOnStart: Boolean = false,
     val query: String = "",
     val programSearchChannelIds: Set<String> = emptySet(),
@@ -213,7 +214,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
             provider = provider, channels = channels,
             groupOrder = store.groupOrder(),
             timelineHours = store.timelineHours(),
-            epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), liveDelaySeconds = store.liveDelaySeconds(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
+            epgHours = store.epgHours(), epgAutoUpdate = store.epgAutoUpdate(), liveDelaySeconds = store.liveDelaySeconds(), liveDelayActivation = store.liveDelayActivation(), updatePlaylistOnStart = store.updatePlaylistOnStart(),
             hasParentalPin = store.hasParentalPin(), recentChannelIds = store.recentChannelIds(), multiviewIds = store.multiviewChannelIds(),
             diagnosticErrors = store.diagnosticErrors(), importReports = store.importReports(), proxy = store.proxySettings(),
             status = RefreshStatus(false, store.lastRefresh(), store.lastError().ifBlank { if (store.lastRefresh() > 0) "Guide is up to date" else "Refresh required" }, channels.size, 0)
@@ -549,6 +550,7 @@ class MainViewModel(private val app: StreamGuideApp) : ViewModel() {
 
     fun setEpgHours(hours: Int) { store.setEpgHours(hours); state = state.copy(epgHours = hours); app.scheduleEpg() }
     fun setLiveDelaySeconds(seconds: Int) { store.setLiveDelaySeconds(seconds); state = state.copy(liveDelaySeconds = seconds) }
+    fun setLiveDelayActivation(stalls: Int) { store.setLiveDelayActivation(stalls); state = state.copy(liveDelayActivation = stalls) }
     fun setEpgAutoUpdate(enabled: Boolean) { store.setEpgAutoUpdate(enabled); state = state.copy(epgAutoUpdate = enabled); app.scheduleEpg() }
     /** Returns why [settings] cannot be saved, or null once every client uses them. */
     fun saveProxy(settings: ProxySettings): String? {

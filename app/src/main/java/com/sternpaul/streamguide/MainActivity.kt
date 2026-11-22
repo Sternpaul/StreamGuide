@@ -315,7 +315,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun MultiTile(channel: Channel, provider: ProviderConfig?, active: Boolean, onActivate: () -> Unit, onRemove: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-    val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(PlaybackPlayerFactory.mediaItem(channel.url, PlaybackPlayerFactory.liveDelaySeconds(context))); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
+    val player = remember(channel.url, provider) { PlaybackPlayerFactory.create(context, provider).apply { setMediaItem(PlaybackPlayerFactory.mediaItem(channel.url)); volume = if(active) 1f else 0f; prepare(); playWhenReady = true } }
     LaunchedEffect(active) { player.volume = if(active) 1f else 0f }
     DisposableEffect(player) { onDispose { player.release() } }
     Box(modifier.background(Color.Black).onFocusChanged { focused=it.isFocused;if(it.isFocused)onActivate() }.remoteClickable(onClick=onActivate,onLongClick=onRemove)) {
@@ -452,7 +452,12 @@ class MainActivity : ComponentActivity() {
             SettingsCard("LIVE DELAY") {
                 Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LiveDelay.allowedSeconds.forEach { seconds ->
-                        TvButton({ vm.setLiveDelaySeconds(seconds) }, selected = state.liveDelaySeconds == seconds) { Text(LiveDelay.label(seconds)) }
+                        TvButton({ vm.setLiveDelaySeconds(seconds) }, selected = state.liveDelaySeconds == seconds) { Text(LiveDelay.secondsLabel(seconds)) }
+                    }
+                }
+                if (state.liveDelaySeconds > 0) Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveDelay.allowedActivation.forEach { stalls ->
+                        TvButton({ vm.setLiveDelayActivation(stalls) }, selected = state.liveDelayActivation == stalls) { Text(LiveDelay.activationLabel(stalls)) }
                     }
                 }
             }

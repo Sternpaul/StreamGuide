@@ -10,8 +10,8 @@ android {
         applicationId = "com.sternpaul.streamguide"
         minSdk = 23
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.11.0"
+        versionCode = 25
+        versionName = "0.12.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
